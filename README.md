@@ -13,6 +13,76 @@ Normal sessions only add to the KB. A finding that contradicts an existing lesso
 
 The rules for readers, writers and profile authors are in [docs/GUIDE.md](docs/GUIDE.md).
 
+## Features
+
+**Records**
+- **Systems, models and lessons.**
+  - A *system* is a chemical system, identified by its profile.
+  - A *model* is one way it was computed, with status and results.
+  - A *lesson* is one transferable statement, with required evidence and a confidence level: established, provisional or open question.
+- **Content-hashed ids.** The same record gets the same id in every copy of a KB, so KBs can be split, merged and shared without collisions.
+- **Structured context on lessons and conflicts:** systems, observables, methods and conditions. This is what reconciliation compares.
+- **Setup conditions.** A lesson that depends on the tools names them, e.g. `software: ["pyscf:2.6"]` or `platform: ["cluster-a"]`. Readers declare their own setup and see only the lessons that apply (`--software`, `--platform`).
+
+**Finding what is known**
+- **Similarity search** (`similar`). Systems are ranked by a profile-defined score from identity fields and a geometry fingerprint, with a per-component breakdown, and the applicable lessons are listed for each.
+- **Scoped lessons.** A lesson reaches every system, one profile, a tag-defined family, or named systems (`lessons --system …`).
+- **Related lessons** (`related`): lessons whose wording and scope overlap a draft, checked before writing.
+- **Links both ways.**
+  - `references` (builds on, supports, qualifies, see also) are written by the lesson that points.
+  - `referenced_by` is derived on every load and save, from references, supersession and conflicts, so the two directions can't drift.
+  - `links <lid>` shows both directions.
+- **Focused copies** (`condense`): a small KB around one target system, to hand to an agent.
+- **Human-readable digest** (`render`): `LESSONS.md`, with open conflicts and links.
+
+**Writing safely**
+- **Validation on every write.** Evidence is required. kbcli checks:
+  - scope and tag rules;
+  - normalized identities;
+  - dangling references.
+
+  It warns on a lesson that holds several statements, a tag that widens a lesson, and copied seeded text.
+- **Locked, atomic writes** with automatic backups. Several sessions can write concurrently, and a failed write changes nothing and prints no success line.
+- **Append-only by default.** Normal sessions add lessons, systems and models, add to lists, and fill empty fields once. Editing, superseding, moving or removing existing lessons needs `--reconcile`.
+
+**Shared and project knowledge**
+- **Two kinds of KB, read together.**
+  - A *shared* KB holds lessons that hold beyond one project, written so outsiders can use them; it is fit to publish.
+  - Any number of *project* KBs hold systems, site-specific and situation-specific records.
+- **Automatic routing.** Each new record goes to the right KB (`--into` and `move` override). A shared lesson may not depend on a project-only record.
+- **Shard directories:** one shard per profile, plus a general one and one per site, so a KB splits cleanly.
+
+**Conflicts and reconciliation**
+- **Conflicts.** A finding that contradicts existing lessons, or two lessons that contradict each other, is recorded in `conflicts.json` (`conflict add`) instead of changing the KB. Readers see `[contested: C-…]` next to the lessons involved.
+- **Reconciliation sessions** (`--reconcile`, agent `agents/kb-reconciler.md`) resolve each conflict with one action:
+  - replace, with an old → new mapping that moves every reference;
+  - constrain, e.g. to a software version;
+  - relevel, merge, split, both hold, or reject.
+
+  Removed lessons are archived in the conflict, and changes made without a conflict are kept as closed records, so every change is on file.
+
+**Evidence that travels**
+- **Supplements** (`supplement`): copies of the files the shared lessons cite, plus the scripts and tables those documents name.
+  - They are stored by the level a lesson applies at, with a manifest and checksums.
+  - Large outputs can be stored as line excerpts.
+  - `validate` reports missing copies, changed copies, and originals that changed after copying.
+
+**Profiles** (one per class of systems)
+- Each profile defines identity fields with normalizers, fingerprint descriptors, similarity components and weights, a tag vocabulary, observables and result fields.
+- Calibration checks pin the similarity: `calibrate`.
+- `generic`, for any molecule or cluster, is built in. A project adds its own profiles through `lessons-kb.json`. GUIDE §8 covers writing and tuning one.
+
+**Interfaces**
+- **CLI:** `kbcli` with 29 commands (`kbcli -h`), all with machine-readable output (`--json`).
+- **Python library:** `lessons_kb`, with `transaction()`, `KB`, profiles, conflicts and supplements.
+- **Config:** `lessons-kb.json`, found by searching upward from the working directory.
+- **Moving knowledge between KBs:** `split`, `merge` (field-level, with a conflict report), `condense` and `rehash` (new ids after a profile version change).
+- **Requirements:** Python ≥ 3.6 and numpy only.
+- **Claude Code integration:**
+  - the `kb-reconciler` agent;
+  - the `continue-doc` skill, for continuation documents in multi-session work;
+  - the `slurm-chain` skill, for smoke-gated, resumable HPC job chains.
+
 ## Install
 Python ≥ 3.6 with numpy:
 ```bash
