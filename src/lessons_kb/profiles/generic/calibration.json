@@ -1,0 +1,20 @@
+{
+ "thresholds": {"similar": 0.9, "dissimilar": 0.6},
+ "items": {
+  "water":       {"identity": {"formula": "H2O", "multiplicity": 1}, "inputs": {"xyz": "examples/water.xyz"}},
+  "water_rot":   {"identity": {"formula": "OH2", "multiplicity": 1}, "inputs": {"xyz": "examples/water_rot.xyz"}},
+  "methane":     {"identity": {"formula": "CH4", "multiplicity": 1}, "inputs": {"xyz": "examples/methane.xyz"}},
+  "ethanol":     {"identity": {"formula": "C2H6O", "multiplicity": 1, "descriptors": {"isomer": "ethanol"}}, "inputs": {"xyz": "examples/ethanol.xyz"}},
+  "ethanol_rot": {"identity": {"formula": "C2H5OH", "multiplicity": 1, "descriptors": {"isomer": "ethanol"}}, "inputs": {"xyz": "examples/ethanol_rot.xyz"}},
+  "dme":         {"identity": {"formula": "CH3OCH3", "multiplicity": 1, "descriptors": {"isomer": "dimethyl ether"}}, "inputs": {"xyz": "examples/dimethyl_ether.xyz"}}
+ },
+ "pairs": [
+  {"a": "water", "b": "water_rot", "expect": "similar"},
+  {"a": "ethanol", "b": "ethanol_rot", "expect": "similar"},
+  {"a": "water", "b": "methane", "expect": "dissimilar"}
+ ],
+ "orderings": [
+  {"query": "ethanol", "closer": "ethanol_rot", "farther": "dme"},
+  {"query": "ethanol", "closer": "dme", "farther": "water"}
+ ]
+}
