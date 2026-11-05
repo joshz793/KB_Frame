@@ -1,6 +1,8 @@
 '''Supplements: copies of the files a KB's lessons cite, stored beside the KB so its evidence travels with it.
 
-Layout (next to the shared KB directory; GUIDE.md §2). Folders follow the levels a lesson applies at:
+Each kind of KB has its own supplements folder (GUIDE.md §2, docs/FILES.md): the shared KB's sits beside it, and
+each project KB's inside it (or as set in lessons-kb.json), so project evidence stays with the project KB. A lesson's
+copies are in the folder of the KB it is stored in. Inside a folder, the layout follows the level a lesson applies at:
   supplements/MANIFEST.json            {"base": <only files under it are copied>, "files": {rel: entry}}
   supplements/general/                 files cited by general lessons
   supplements/profile/<profile>/       ... by profile lessons
@@ -107,22 +109,30 @@ def _name(src, lines):
     return b
 
 
-def sync(kb, root, lids=(), max_size=DEFAULT_MAX, base=None, referenced=False, excerpt=None):
+def sync(kb, root, lids=(), max_size=DEFAULT_MAX, base=None, referenced=False, excerpt=None, only=None, keep=(),
+         fallback=()):
     '''copy the evidence of lessons lids (and keep every lesson already linked) into root, in the level layout;
-    excerpt=(lid, path, (a, b)) stores lines a-b of one cited file instead of the whole file. Returns a report.'''
+    excerpt=(lid, path, (a, b)) stores lines a-b of one cited file instead of the whole file. only: the lessons
+    this folder holds (default: all); linked lessons outside it are left alone. keep: copies (paths inside root)
+    not to delete even if no lesson here cites them. fallback: other folders; when an original is gone, a lesson's
+    copy there is copied here instead. Returns a report.'''
     man = load_manifest(root)
     old = man['files']
     if not man.get('base'):
         paths = [e['path'] for i in lids for e in kb.lessons[i]['evidence'] if os.path.isabs(e['path'])]
-        man['base'] = base or (os.path.commonpath(paths) if paths else '/')
+        base = base or (os.path.commonpath(paths) if paths else '/')
+        man['base'] = os.path.dirname(base) if os.path.isfile(base) else base     # one cited file: its directory
     base = man['base']
     referenced = referenced or any(v.get('kind') == 'referenced' for v in old.values())
     old_by_key = {(v['source'], tuple(v['lines']) if v.get('lines') else None): (rel, v) for rel, v in old.items()}
     rep = {'copied': [], 'moved': [], 'kept': [], 'removed': [], 'linked': [], 'unlinked': [],
            'skipped_large': [], 'missing': [], 'referenced': []}
-    todo = set(lids) | {i for i, l in kb.lessons.items() if any(e.get('supplement') for e in l.get('evidence', []))}
+    todo = set(lids) | {i for i, l in kb.lessons.items() if any(e.get('supplement') for e in l.get('evidence', []))
+                        and (only is None or i in only)}
     plan = {}                              # key -> {'levels': set((rank, dir)), 'cited_by', 'kind', ...}
     cite = {}                              # (lid, evidence index) -> key
+    copy_from = {}                         # key -> file to copy when the original is gone (a copy in a fallback)
+    fb = [(fr, load_manifest(fr)['files']) for fr in fallback if os.path.isdir(fr)]
     for lid in sorted(todo):
         l = kb.lessons[lid]
         lvl = level_of(l, kb.systems)
@@ -137,8 +147,14 @@ def sync(kb, root, lids=(), max_size=DEFAULT_MAX, base=None, referenced=False, e
                 if e.get('supplement') and e['supplement'] in old:      # original gone: keep the copy we have
                     lines = tuple(old[e['supplement']]['lines']) if old[e['supplement']].get('lines') else None
                     src = old[e['supplement']]['source']
-                else:
-                    rep['missing'].append((lid, src)); continue
+                else:                                                   # or take the copy in another folder
+                    hit = next(((fr, fm[e['supplement']]) for fr, fm in fb if e.get('supplement') in fm
+                                and os.path.isfile(os.path.join(fr, e['supplement']))), None)
+                    if hit is None:
+                        rep['missing'].append((lid, src)); continue
+                    lines = tuple(hit[1]['lines']) if hit[1].get('lines') else None
+                    src = hit[1]['source']
+                    copy_from[(os.path.abspath(src), lines)] = os.path.join(hit[0], e['supplement'])
             elif not lines and os.path.getsize(src) > max_size:
                 rep['skipped_large'].append((lid, src, os.path.getsize(src))); continue
             key = (os.path.abspath(src), lines)
@@ -206,7 +222,9 @@ def sync(kb, root, lids=(), max_size=DEFAULT_MAX, base=None, referenced=False, e
             copied, h, hs = ov.get('copied', today), ov['sha256'], ov.get('sha256_source')
         else:
             src, lines = key
-            if lines:
+            if key in copy_from:                                    # the original is gone: copy another folder's copy
+                shutil.copy2(copy_from[key], dst)
+            elif lines:
                 with open(src, errors='replace') as fh:
                     part = [x for i, x in enumerate(fh, 1) if lines[0] <= i <= lines[1]]
                 with open(dst, 'w') as fh:
@@ -225,7 +243,9 @@ def sync(kb, root, lids=(), max_size=DEFAULT_MAX, base=None, referenced=False, e
         files[r] = ent
     for orel in old:
         f = os.path.join(root, orel)
-        if orel not in files and os.path.isfile(f):
+        if orel in keep and orel not in files and os.path.isfile(f):
+            files[orel] = old[orel]; rep['kept'].append(orel)
+        elif orel not in files and os.path.isfile(f):
             os.remove(f); rep['removed'].append(orel)
     if os.path.isdir(stage):
         shutil.rmtree(stage)
@@ -254,15 +274,65 @@ def sync(kb, root, lids=(), max_size=DEFAULT_MAX, base=None, referenced=False, e
     return rep
 
 
-def check(kb, root):
-    '''(errors, warnings) for the supplements of kb's lessons'''
+def project_dir(kb_path):
+    '''the default supplements folder of a project KB: supplements/ inside its directory, or <name>.supplements/
+    beside a single-file KB'''
+    kb_path = os.path.abspath(kb_path).rstrip('/')
+    if kb_path.endswith('.json') and not os.path.isdir(kb_path):
+        return kb_path[:-5] + '.supplements'
+    return os.path.join(kb_path, 'supplements')
+
+
+def _same_source(a, b):
+    return a.get('source') == b.get('source') and a.get('lines') == b.get('lines')
+
+
+def foreign_copies(root, ids, owner):
+    '''copies in root that cite only lessons stored elsewhere, while those lessons' own folder has no copy yet
+    (their links still point here): sync must keep them until the lessons are copied into their own folder'''
+    keep = set()
+    man = load_manifest(root) if os.path.isdir(root) else {'files': {}}
+    others = {}
+    for rel, ent in man['files'].items():
+        for lid in ent.get('cited_by', []):
+            own = owner.get(lid)
+            if lid in ids or own is None or own == root:
+                continue
+            if own not in others:
+                others[own] = list(load_manifest(own)['files'].values()) if os.path.isdir(own) else []
+            if not any(_same_source(ent, v) for v in others[own]):
+                keep.add(rel)
+    return keep
+
+
+def sync_roots(kb, roots, lids=None, run=None, **kw):
+    '''sync several folders. roots: [(root, ids of the lessons stored in its KB)] for every folder, project folders
+    first, so a lesson's copy is in its own folder before the shared folder lets go of it. run: the folders to sync
+    (default: all). lids: the lessons to copy (None: every lesson of each folder run). Returns {root: report}.'''
+    owner = {i: r for r, ids in roots for i in ids}
+    reps = {}
+    for root, ids in roots:
+        if run is not None and root not in run:
+            continue
+        ids = set(ids)
+        want = sorted(ids if lids is None else ids & set(lids))
+        keep = foreign_copies(root, ids, owner)
+        if not want and not keep and not os.path.isdir(root):
+            continue
+        reps[root] = sync(kb, root, want, only=ids, keep=keep, fallback=[r for r, _ in roots if r != root], **kw)
+    return reps
+
+
+def check(kb, root, only=None):
+    '''(errors, warnings) for the supplements of kb's lessons (only: the lessons stored with this folder)'''
     E, W = [], []
+    lessons = {i: l for i, l in kb.lessons.items() if only is None or i in only}
     if not root or not os.path.isdir(root):
-        if any(e.get('supplement') for l in kb.lessons.values() for e in l.get('evidence', [])):
-            W.append(f'lessons link supplements, but {root} does not exist')
+        if any(e.get('supplement') for l in lessons.values() for e in l.get('evidence', [])):
+            W.append(f'lessons link supplements, but {root} does not exist; rerun `kbcli supplement`')
         return E, W
     man = load_manifest(root)
-    for lid, l in kb.lessons.items():
+    for lid, l in lessons.items():
         for e in l.get('evidence', []):
             rel = e.get('supplement')
             if not rel:
@@ -279,4 +349,19 @@ def check(kb, root):
     for rel in man['files']:
         if not os.path.isfile(os.path.join(root, rel)):
             W.append(f'supplements manifest lists {rel}, which is missing')
+    return E, W
+
+
+def check_roots(kb, roots, shared_root=None):
+    '''check() for each (root, ids); also warns when the shared folder holds copies that only project lessons cite'''
+    E, W = [], []
+    owner = {i: r for r, ids in roots for i in ids}
+    for root, ids in roots:
+        e, w = check(kb, root, set(ids)); E += e; W += w
+    if shared_root and os.path.isdir(shared_root):
+        for rel, ent in load_manifest(shared_root)['files'].items():
+            by = [i for i in ent.get('cited_by', []) if i in kb.lessons]
+            if by and all(owner.get(i) not in (None, shared_root) for i in by):
+                W.append(f'shared supplements hold {rel}, cited only by project lessons ({", ".join(by)}); run '
+                         '`kbcli supplement --all` to move it to the project folder')
     return E, W

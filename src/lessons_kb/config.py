@@ -3,7 +3,10 @@
   {"shared": "db",                       the shared KB (a shard directory or a KB file)
    "project": ["db_project"],            project KBs read together with it (optional)
    "profiles": ["profiles"],             directories of the project's own profiles (optional)
-   "supplements": "supplements"}         copies of cited files (optional; default: beside "shared")
+   "supplements": "supplements"}         copies of cited files (optional), one folder per kind of KB:
+                                         a path is the shared KB's folder (default: beside "shared");
+                                         {"shared": ..., "project": ...} sets both (project default:
+                                         supplements/ inside each project KB directory)
 Relative paths are taken from the config file's directory. $LESSONS_KB_CONFIG names a config file directly.
 Command-line options and $LESSONS_KB / $LESSONS_KB_PROJECT override the config (GUIDE.md §5).'''
 import json
@@ -30,7 +33,8 @@ def find_config(start=None):
 
 
 def load_config(path):
-    '''the config with absolute paths: {"shared": str|None, "project": [...], "profiles": [...], "supplements": str|None}'''
+    '''the config with absolute paths: {"shared": str|None, "project": [...], "profiles": [...],
+    "supplements": {"shared": str|None, "project": str|None}}'''
     with open(path) as f:
         raw = json.load(f)
     bad = set(raw) - set(KEYS)
@@ -39,10 +43,17 @@ def load_config(path):
     base = os.path.dirname(os.path.abspath(path))
     absp = lambda p: p if os.path.isabs(p) else os.path.normpath(os.path.join(base, p))
     listify = lambda v: [v] if isinstance(v, str) else list(v or [])
+    sup = raw.get('supplements')
+    if isinstance(sup, dict):
+        if set(sup) - {'shared', 'project'}:
+            raise ValueError(f'{path}: "supplements" keys are "shared" and "project", not {sorted(set(sup))}')
+    elif sup is not None and not isinstance(sup, str):
+        raise ValueError(f'{path}: "supplements" is a path or {{"shared": ..., "project": ...}}')
+    sup = sup if isinstance(sup, dict) else {'shared': sup}
     return {'shared': absp(raw['shared']) if raw.get('shared') else None,
             'project': [absp(p) for p in listify(raw.get('project'))],
             'profiles': [absp(p) for p in listify(raw.get('profiles'))],
-            'supplements': absp(raw['supplements']) if raw.get('supplements') else None,
+            'supplements': {k: absp(sup[k]) if sup.get(k) else None for k in ('shared', 'project')},
             'path': os.path.abspath(path)}
 
 

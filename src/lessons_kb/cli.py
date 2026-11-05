@@ -11,7 +11,8 @@ import os
 import sys
 
 from lessons_kb.core import (KB, KBError, build_system, check_calibration, transaction, setup_match,  # noqa: E402
-                     CORE_CATEGORIES, SETUP_KEYS, SHARED, PROJECT, RESOLUTION_ACTIONS, context_ok, successors)
+                     CORE_CATEGORIES, SETUP_KEYS, SHARED, PROJECT, RESOLUTION_ACTIONS, context_ok, successors,
+                     EVIDENCE_KINDS, VERDICTS, VERIFY_METHODS)
 from lessons_kb.profile import load_profiles  # noqa: E402
 from lessons_kb import supplements as supp  # noqa: E402
 from lessons_kb.config import find_config, load_config, write_config, CONFIG_NAME  # noqa: E402
@@ -60,8 +61,8 @@ def contest_note(kb, l):
     return f" [contested: {', '.join(c)}]" if c else ''
 
 
-WRITE_CMDS = ('init', 'add-system', 'update-system', 'add-model', 'add-lesson', 'update-lesson', 'supersede', 'move',
-              'remove', 'conflict', 'supplement', 'rehash')
+WRITE_CMDS = ('init', 'add-system', 'update-system', 'add-model', 'add-lesson', 'update-lesson', 'evidence', 'verify',
+              'supersede', 'move', 'remove', 'conflict', 'supplement', 'rehash')
 
 
 def db_path(args):
@@ -72,10 +73,22 @@ def db_path(args):
     return p
 
 
-def supplements_root(args, db):
-    if CFG and CFG.get('supplements') and not args.db and not os.environ.get('LESSONS_KB'):
-        return CFG['supplements']
-    return supp.supplements_dir(db)
+def supplement_roots(args, db, kb):
+    '''([(folder, ids of the lessons stored with it)], the shared folder): one folder per kind of KB, project
+    folders first (GUIDE §2). Without project KBs there is one folder, for every lesson.'''
+    cfg = (CFG or {}).get('supplements') or {} if CFG and not args.db and not os.environ.get('LESSONS_KB') else {}
+    shared = cfg.get('shared') or supp.supplements_dir(db)
+    if kb.sources is None:
+        return [(shared, sorted(kb.lessons))], shared
+    groups = {}
+    for p, part in kb.source_parts().items():
+        if dict((q, r) for r, q in kb.sources)[p] == SHARED:
+            continue
+        root = cfg.get('project') or supp.project_dir(p)
+        groups.setdefault(root, set()).update(i for i in part.lessons if kb.role_of('lessons', i) == PROJECT)
+    groups.setdefault(shared, set()).update(i for i in kb.lessons if kb.role_of('lessons', i) == SHARED)
+    order = sorted(groups, key=lambda r: r == shared)
+    return [(r, sorted(groups[r])) for r in order], shared
 
 
 def project_paths(args):
@@ -199,8 +212,11 @@ def main(argv=None, config_start=None):
     p.add_argument('--json-file', '-f', required=True)
     p.add_argument('--into', choices=(SHARED, PROJECT), help='KB to store them in (default: routed, see GUIDE §2)')
     p = sp.add_parser('supplement', help='copy the files lessons cite into supplements/ and link them (GUIDE §2)')
-    p.add_argument('ids', nargs='*', metavar='LID'); p.add_argument('--all', action='store_true',
-                                                                    help='every lesson stored in the shared KB')
+    p.add_argument('ids', nargs='*', metavar='LID')
+    g = p.add_mutually_exclusive_group()
+    g.add_argument('--all', action='store_true', help='every lesson, each into the folder of the KB that stores it')
+    g.add_argument('--shared', action='store_true', help='every lesson stored in the shared KB')
+    g.add_argument('--project', dest='project_only', action='store_true', help='every lesson stored in a project KB')
     p.add_argument('--referenced', action='store_true',
                    help='also copy the files that cited documents name (scripts, tables), listed in the manifest')
     p.add_argument('--max-size', default='1M', help='skip larger files (default 1M; suffixes k, M)')
@@ -211,9 +227,19 @@ def main(argv=None, config_start=None):
     p.add_argument('--by', default='kb-reconciler')
     p = sp.add_parser('move', help='move a system or lesson to the shared or the project KB'); p.add_argument('id')
     p.add_argument('--to', required=True, choices=(SHARED, PROJECT))
-    p = sp.add_parser('update-lesson', help='edit mutable fields of a lesson'); p.add_argument('id')
+    p = sp.add_parser('update-lesson', help='edit fields of a lesson (normal sessions: metadata only)'); p.add_argument('id')
     p.add_argument('--json-file', '-f', required=True)
     p.add_argument('--replace', action='store_true', help='replace applies_to instead of extending it (to narrow where a lesson applies)')
+    p = sp.add_parser('evidence', help="annotate one of a lesson's evidence entries, or add one (metadata)")
+    p.add_argument('id'); p.add_argument('--path', required=True, help='the cited file (an existing entry, or a new one)')
+    p.add_argument('--index', type=int, help='which entry, when several cite the same path (0-based)')
+    p.add_argument('--kind', choices=EVIDENCE_KINDS); p.add_argument('--lines', help='A-B: the lines the claim rests on')
+    p.add_argument('--quote', help='verbatim text at those lines'); p.add_argument('--supports', help='which claim or number')
+    p.add_argument('--model', help='<system id>/<model id> the file belongs to'); p.add_argument('--note')
+    p = sp.add_parser('verify', help="record a check of a lesson's claims against its evidence (metadata)")
+    p.add_argument('id'); p.add_argument('--verdict', required=True, choices=VERDICTS)
+    p.add_argument('--method', default='agent', choices=VERIFY_METHODS); p.add_argument('--by', default='')
+    p.add_argument('--note', default='')
     p = sp.add_parser('supersede', help='mark a lesson superseded by another, or by several when splitting it')
     p.add_argument('old'); p.add_argument('--by', required=True, nargs='+', metavar='NEW')
     p = sp.add_parser('related', help='active lessons that may overlap or conflict with a lesson or a draft')
@@ -397,7 +423,7 @@ def main(argv=None, config_start=None):
             elif c == 'validate':
                 E, W = kb.validate(strict=args.strict)
                 E2, W2 = kb.check_sources(); E += E2; W += W2
-                E2, W2 = supp.check(kb, supplements_root(args, db)); E += E2; W += W2
+                E2, W2 = supp.check_roots(kb, *supplement_roots(args, db, kb)); E += E2; W += W2
                 emit(args, {'errors': E, 'warnings': W},
                      '\n'.join([f'ERROR {e}' for e in E] + [f'warning {w}' for w in W] +
                                [f'{len(E)} errors, {len(W)} warnings; {len(kb.systems)} systems, {len(kb.lessons)} lessons; '
@@ -488,6 +514,18 @@ def main(argv=None, config_start=None):
                 elif c == 'update-lesson':
                     kb.update_lesson(args.id, read_json(args.json_file), replace=args.replace)
                     emit(args, {'updated': args.id}, f'updated {args.id}')
+                elif c == 'evidence':
+                    patch = {k: getattr(args, k) for k in ('path', 'index', 'kind', 'lines', 'quote', 'supports', 'model', 'note')
+                             if getattr(args, k) is not None}
+                    patch['path'] = os.path.abspath(args.path) if not os.path.isabs(args.path) else args.path
+                    kb.update_lesson(args.id, {'evidence': [patch]})
+                    emit(args, {'updated': args.id, 'evidence': patch['path']}, f"updated {args.id}: evidence {patch['path']}")
+                elif c == 'verify':
+                    rec = {'verdict': args.verdict, 'method': args.method, 'by': args.by}
+                    if args.note:
+                        rec['note'] = args.note
+                    kb.add_verification(args.id, rec)
+                    emit(args, {'verified': args.id, 'verdict': args.verdict}, f'{args.id}: {args.verdict}')
                 elif c == 'supersede':
                     kb.supersede(args.old, args.by)
                     emit(args, {'superseded': args.old, 'by': args.by}, f"{args.old} -> {', '.join(args.by)}")
@@ -496,12 +534,15 @@ def main(argv=None, config_start=None):
                     size = args.max_size.strip()
                     mult = {'k': 1e3, 'K': 1e3, 'M': 1e6, 'G': 1e9}.get(size[-1:], 1)
                     max_size = int(float(size.rstrip('kKMG')) * mult)
-                    if args.all:
-                        lids = [i for i in kb.lessons if kb.sources is None or kb.role_of('lessons', i) == SHARED]
-                    else:
-                        lids = args.ids
-                    if not lids:
-                        raise KBError('give lesson ids or --all')
+                    roots, shared_root = supplement_roots(args, db, kb)
+                    if args.ids and (args.all or args.shared or args.project_only):
+                        raise KBError('give lesson ids, or one of --all, --shared, --project')
+                    run = None
+                    if args.shared or args.project_only:
+                        run = {r for r, _ in roots if (r == shared_root) == bool(args.shared)}
+                    lids = args.ids or [i for r, ids in roots if run is None or r in run for i in ids]
+                    if not lids and not (args.all or args.shared or args.project_only):
+                        raise KBError('give lesson ids, or one of --all, --shared, --project')
                     for i in lids:
                         kb._lesson(i)
                     excerpt = None
@@ -510,14 +551,16 @@ def main(argv=None, config_start=None):
                             raise KBError('--lines needs --path and exactly one lesson')
                         a, b = (int(x) for x in args.lines.split('-'))
                         excerpt = (lids[0], args.path, (a, b))
-                    rep = supp.sync(kb, supplements_root(args, db), lids, max_size=max_size,
-                                    referenced=args.referenced, excerpt=excerpt)
-                    emit(args, rep, f"{len(rep['copied'])} files copied, {len(rep['moved'])} moved, "
-                                    f"{len(rep['removed'])} removed, {len(rep['linked'])} citations linked, "
-                                    f"{len(set(rep['referenced']))} referenced files; "
-                                    f"{len(rep['skipped_large'])} skipped as too large, {len(rep['missing'])} missing" +
-                         ''.join(f"\n  too large: {x[1]} ({x[2] / 1e6:.1f} MB; {x[0]})" for x in rep['skipped_large']) +
-                         ''.join(f"\n  missing: {x[1]} ({x[0]})" for x in rep['missing']))
+                    reps = supp.sync_roots(kb, roots, lids, run=run, max_size=max_size, referenced=args.referenced,
+                                           excerpt=excerpt)
+                    emit(args, reps, '\n'.join(
+                        f"{root}: {len(rep['copied'])} files copied, {len(rep['moved'])} moved, "
+                        f"{len(rep['removed'])} removed, {len(rep['linked'])} citations linked, "
+                        f"{len(set(rep['referenced']))} referenced files; "
+                        f"{len(rep['skipped_large'])} skipped as too large, {len(rep['missing'])} missing" +
+                        ''.join(f"\n  too large: {x[1]} ({x[2] / 1e6:.1f} MB; {x[0]})" for x in rep['skipped_large']) +
+                        ''.join(f"\n  missing: {x[1]} ({x[0]})" for x in rep['missing'])
+                        for root, rep in reps.items()) or 'nothing to copy')
                 elif c == 'conflict':
                     if args.ccmd == 'add':
                         if not args.json_file and not args.context_file:

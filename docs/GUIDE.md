@@ -39,12 +39,13 @@ The KB records what has been learned from calculations on chemical systems, so t
 
 Interim readings that are later revised would leave records that need correcting, so keep them in the work's own notes (e.g. its continuation document) until the work closes. Cite the evidence the conclusions rest on.
 
-**In normal sessions the KB only grows.**
+**In normal sessions the KB only grows, apart from metadata.**
 - You add lessons, systems and models.
 - You may add to list fields, and fill an empty field or a pending model once.
-- You never edit, supersede, move, re-scope or replace an existing lesson, and never overwrite a filled field.
+- You may edit a lesson's **metadata**: the fields that say how well its claim is supported, not what it claims or where it applies. These are `evidence` (annotate an entry, or add one; never remove one or change its `path`), `coverage`, `verification` and `reviewed` (§3).
+- You never change what an existing lesson says or where it applies: no editing its title, text, category, scope, `applies_to`, confidence, tags or `context`; no superseding, moving or replacing it. You never overwrite a filled field of a system or model.
 - When a new finding contradicts a lesson, record it as a **conflict** instead of adding it (§4 rule 5).
-- Existing lessons change only in dedicated **reconciliation sessions** (§12).
+- Everything else about existing lessons changes only in dedicated **reconciliation sessions** (§12): resolving conflicts, and heavy reworking such as rewording, splitting, merging and re-levelling.
 - kbcli enforces this: writes run in `general` mode unless `--reconcile` is given.
 
 **Never hand-edit the KB files (`db/*.json`, `db_project/*.json`).** Use `kbcli` or the library's `transaction()`. Both lock the KB, validate the result and keep backups, and other sessions may be writing at the same time.
@@ -65,7 +66,7 @@ Knowledge lives in two kinds of KB, read together:
 | KB | Default location | Holds | In version control |
 |---|---|---|---|
 | **Shared** | `shared` in the project's `lessons-kb.json` (or `--db`, `$LESSONS_KB`) | Lessons that hold beyond one project, stated so a reader outside it can use them | Yes |
-| **Project** | `project` in `lessons-kb.json` (or `--project`, repeatable; `$LESSONS_KB_PROJECT`, `:`-separated) | The systems studied and their models; lessons about one system; site (platform) lessons; the group's own scripts; situation-specific decisions; copies of cited notes under `evidence/` | No (it names local paths and unpublished results) |
+| **Project** | `project` in `lessons-kb.json` (or `--project`, repeatable; `$LESSONS_KB_PROJECT`, `:`-separated) | The systems studied and their models; lessons about one system; site (platform) lessons; the group's own scripts; situation-specific decisions; copies of its lessons' evidence in its own `supplements/` | No (it names local paths and unpublished results) |
 
 - **Reads merge everything.** Every command reads the shared KB and all project KBs. `similar` therefore ranks the project's systems and returns both kinds of lessons. `--no-project` reads the shared KB alone.
 - **Writes go back where a record came from.** A new record is routed by `kb.core.route_new`:
@@ -78,7 +79,16 @@ Knowledge lives in two kinds of KB, read together:
 - **A methodological user decision** that is good practice anywhere goes to the shared KB (`--into shared`), restated as practice. A decision for one situation goes only into the system's `user_decisions` (§4 rule 4).
 
 ### Supplements: copies of the cited files
-`supplements/` beside the shared KB holds copies of the files the shared lessons cite, so their evidence travels with the KB.
+Copies of the files lessons cite, so their evidence can be read where the originals can't. **Each kind of KB has its own supplements folder**, and a lesson's copies go into the folder of the KB that stores it:
+
+| Folder | Default location | Holds copies for | In version control |
+|---|---|---|---|
+| Shared | `supplements/` beside the shared KB | shared lessons | yes, with the shared KB |
+| Project | `supplements/` inside each project KB directory (`<name>.supplements/` beside a single-file KB) | that KB's lessons | no, with the project KB |
+
+`supplements` in `lessons-kb.json` sets the locations: a path sets the shared folder; `{"shared": …, "project": …}` sets both (one project folder then serves every project KB). A file cited by lessons in both KBs is copied into both folders, so each KB stands alone.
+- **Commands:** `supplement --all` copies the evidence of every lesson, each into its own folder; `--shared` and `--project` do one kind; `supplement <lid>…` does the lessons named.
+- **Moving between folders:** when a lesson moves between KBs (`move`), or a copy sits in the shared folder from an earlier version, the next `supplement --all` copies it into the right folder, from the original or, if that is gone, from the old copy. The shared folder keeps its copy until then. `validate` warns while the shared folder holds copies that only project lessons cite.
 - **Layout:** folders follow the level a lesson applies at, as in the lesson record (§3, "Applicability"):
 
   | Folder | Files cited by |
@@ -99,7 +109,9 @@ Knowledge lives in two kinds of KB, read together:
 - **Size cap:** 1 MB per file by default. For a larger output, store the lines the lesson rests on: `supplement <lid> --path <file> --lines A-B`.
 - **Checks:** `validate` warns when a copy is missing or no longer matches its checksum, and when the original has changed since it was copied (rerun `supplement`).
 - Evidence entries are not part of a lesson's id, so linking copies never changes ids.
-- **When writing a shared lesson,** run `kbcli supplement <lid> --referenced` after adding it.
+- **After adding a lesson** (shared or project), run `kbcli supplement <lid> --referenced`. [FILES.md](FILES.md) maps both folders.
+
+[FILES.md](FILES.md) lists every file and folder kbcli writes, when, and for which use case.
 
 Inside each KB directory, records are split into shards:
 
@@ -161,13 +173,15 @@ The top level is `{"kb_meta": {...}, "systems": {id: system}, "lessons": {id: le
 | `category` | A core category (below) or one added by a profile listed in `applies_to.profiles` |
 | `scope` | `general`, `profile`, `family` or `system` (see "Applicability") |
 | `applies_to` | `{profiles: [...], systems: [ids], tags: [...], software: [...], platform: [...]}`. The last two are the optional **setup condition** (see "Applicability") |
-| `evidence` | **Required, non-empty**: `[{path, note}]`. `path` is a file that supports the lesson (a result table, log, document or script); `note` says where in it to look |
+| `evidence` | **Required, non-empty**: `[{path, note, ...}]`. `path` is a file that supports the lesson (a result table, log, document or script); `note` says where in it to look. Optional keys make the claim checkable: `kind` (`output`, `input`, `analysis`, `note` or `literature`), `lines` (`"A-B"`, the lines the claim rests on), `quote` (the text at those lines, verbatim), `supports` (which claim or number the entry backs) and `model` (`<system id>/<model id>` of the run). `supplement` and `sha256` are written by `kbcli supplement`. **Metadata:** editable in normal sessions (`kbcli evidence`); entries are never removed and their `path` never changes |
 | `confidence` | `established` (reproduced, or directly measured), `provisional` (one observation, or plausible but unconfirmed) or `open_question` (a hypothesis to test) |
 | `source` | `computed`, `user_decision` or `literature` |
 | `status`, `superseded_by` | `active` or `superseded`, with the id of the replacing lesson, or a list of ids when the lesson was split |
 | `author`, `date`, `updated` | `date` is the date of the finding: when the evidence was produced or the decision made. Use the recording date only if the evidence gives none. It is part of the id, so a fixed date keeps seeded ids stable. `updated` is set automatically |
 | `seeded_from_docs` | True when the lesson was copied from an existing document, not observed directly |
-| `reviewed` | True only after a person has confirmed it |
+| `reviewed` | True only after a person has confirmed it. **Metadata** |
+| `coverage` | Optional: the cases the evidence covers, one string each, e.g. `["singlet", "triplet", "quintet"]`. Needed when the lesson uses a universal word (§4 rule 9). **Metadata**; not part of the id |
+| `verification` | Optional: the checks of the lesson's claims against its evidence, newest last: `[{"date", "by", "method": "agent"\|"person", "verdict", "note"?}]`, where `verdict` is `supported`, `partly`, `not_supported` or `cannot_verify`. Add one with `kbcli verify LID --verdict …`. `render` shows the latest. **Metadata**; not part of the id |
 | `tags` | Free tags on the lesson itself, for searching |
 | `references` | Optional links from this lesson to others: `[{"id": "L-…", "rel": …, "note"?: …}]`, where `rel` is `builds_on`, `supports`, `qualifies` or `see_also` (the default). A new lesson may point at existing ones in any session; links between existing lessons are added in reconciliation. Not part of the id |
 | `referenced_by` | **Derived; never written by hand.** Who points at this lesson: other lessons' `references` (with their `rel`), lessons it supersedes (`superseded`), and conflicts that name it (`contested` while open, `reconciled` once closed). Recomputed on every load and save, so the two directions can't drift. A stored file lists only the links within that file; `kbcli links <lid>` shows all of them |
@@ -237,6 +251,10 @@ Lessons without a setup condition always apply.
    - Use `review.level: full` only after you have read the primary results and checked the entry against them.
 7. **Paths.** Use absolute paths in `evidence`, `docs` and `dir`. Use paths that exist when you write them.
 8. **Close out models.** When the work closes (§1), fill each model's `status` and `result_summary` with `add-model ID -f model.json --update`, and set `best_model` if it is empty. A model registered at submission stays `pending` until then. A model is filled once: a filled result or a final status is not overwritten, so a rerun is a new model.
+9. **Claim only the coverage you have.** A lesson that says *every*, *all*, *always*, *never* or *must* about its findings ("holds for every spin state") needs evidence for each case. List the cases the evidence covers in `coverage`; otherwise narrow the wording.
+   - `validate` warns on an active lesson that uses one of these words without `coverage`. Hyphenated compounds (`all-electron`) don't count.
+   - Normal sessions can add `coverage`: `update-lesson ID -f cov.json`, with `{"coverage": [...]}` in the file. Narrowing the wording is a reconciliation step.
+   - The warning can't tell a finding from an instruction ("check every active orbital"). For an instruction, leave it; the reconciler can reword it if it overstates.
 
 ## 5. CLI recipes
 Run everything as `kbcli [--json] <command>`. `kbcli` comes with `pip install <framework>`; without installing, run `python kbcli.py` from the framework checkout.
@@ -244,6 +262,7 @@ Run everything as `kbcli [--json] <command>`. `kbcli` comes with `pip install <f
   ```json
   {"shared": "db", "project": ["db_project"], "profiles": ["profiles"], "supplements": "supplements"}
   ```
+  `supplements` may instead be `{"shared": "supplements", "project": "db_project/supplements"}`; the project folder defaults to `supplements/` inside each project KB (§2).
   `kbcli init` in an empty directory writes this file and an empty shared KB `db/`; `kbcli --db db_project init` adds a project KB. Overrides: `--db` or `$LESSONS_KB` for the shared KB (then no project KB is read unless given), `--project` or `$LESSONS_KB_PROJECT` for project KBs, `--no-project`. `--db` also accepts a single KB file, e.g. one written by `condense`.
 - `--json` gives machine-readable output.
 - Any python with numpy works.
@@ -278,10 +297,14 @@ kbcli links <lid>                      # everything a lesson points to and every
 kbcli --reconcile conflict resolve C-... --action replace --result <new> --replace <old>   # reconciliation only
 kbcli --reconcile conflict resolve C-... --action replace --result <n1> <n2> --replace <o1> <o2> --map <o1>=<n1> <o2>=<n2>
 kbcli --reconcile remove <lid> --why "..."   # drop a lesson without a successor (archived in conflicts.json)
-kbcli supplement <lid> [--referenced]     # copy the files a lesson cites into supplements/ (§2)
-kbcli supplement --all --referenced       # every shared lesson; files over --max-size (1M) are skipped
+kbcli supplement <lid> [--referenced]     # copy the files a lesson cites into its KB's supplements folder (§2)
+kbcli supplement --all --referenced       # every lesson, each into its own folder; files over --max-size (1M) are skipped
+kbcli supplement --shared | --project     # only the shared, or only the project, lessons
 kbcli supplement <lid> --path out.log --lines 600-640   # an excerpt of a large output
-kbcli --reconcile update-lesson <lid> -f fields.json [--replace]   # reconciliation only; --replace: applies_to is replaced
+kbcli evidence <lid> --path out.log --kind output --lines 600-640 --quote "..." --supports "the 4 macro"   # metadata, any session
+kbcli verify <lid> --verdict partly --method agent --by <name> --note "..."   # record a check of the claims (metadata)
+kbcli update-lesson <lid> -f meta.json   # metadata only in normal sessions: evidence, coverage, verification, reviewed
+kbcli --reconcile update-lesson <lid> -f fields.json [--replace]   # any field but the id-defining ones; --replace: applies_to is replaced
 kbcli related -f draft.json          # before writing: active lessons the draft may contradict or repeat
 kbcli related <lid>                  # the same for a lesson already in the KB
 kbcli --reconcile supersede <old lid> --by <new lid>            # reconciliation only (§12)
@@ -487,7 +510,8 @@ They must be invariant to anything that does not change the system (orientation,
 **When closing a piece of work**
 - Fill the model's `status` and `result_summary` (once).
 - Add the lessons, with evidence, `context`, the broadest true scope and, when a lesson depends on the tools, a setup condition.
-- Check where each landed (`add-lesson` prints it). A lesson that holds beyond the project belongs in the shared KB, written without project labels (§2). Copy its evidence with `supplement <lid> --referenced`.
+- Point each evidence entry at the converged run that shows the claim, with `lines` and `quote` where you can. List `coverage` when a lesson says *every*, *all*, *always*, *never* or *must* (§4 rule 9).
+- Check where each landed (`add-lesson` prints it). A lesson that holds beyond the project belongs in the shared KB, written without project labels (§2). Copy each lesson's evidence with `supplement <lid> --referenced`; it goes into the folder of the KB that holds the lesson.
 - Before adding each lesson, check `related`. A draft that contradicts, corrects or repeats an existing lesson becomes a conflict (`conflict add`), not a lesson (§4 rule 5).
 - Record user decisions in the system's `user_decisions`. Add a decision lesson only for working rules that carry over, and ask the user if that is unclear (§4 rule 4).
 - `validate`, then `render`.
@@ -517,7 +541,7 @@ They must be invariant to anything that does not change the system (orientation,
 - optional `evidence`;
 - `resolution`, once closed: action, resulting lessons, archived lessons, note, who, date.
 
-Any session may add a conflict. Only a reconciliation session may resolve one.
+Any session may add a conflict, and edit lesson metadata (§1). Only a reconciliation session may resolve a conflict, or rework a lesson: reword, split, merge, re-level or remove it.
 
 **Reconciliation sessions** are dedicated sessions, started when the user asks, and run by the agent defined in the framework's `agents/kb-reconciler.md`. Every write uses `--reconcile` (or `$LESSONS_KB_MODE=reconcile`). For each open conflict, the reconciler:
 1. reads both sides, their `context`, and their evidence (supplement copies first);

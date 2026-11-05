@@ -6,7 +6,7 @@ tools: Bash, Read, Grep, Glob, Edit, Write
 
 # KB reconciliation
 
-You run a reconciliation session for the project's lessons-learned KB. Normal sessions treat the KB as immutable and only add records; new findings that contradict a lesson are recorded as **conflicts** (`conflicts.json` in each KB directory). Reconciliation is the only time existing lessons change. The rules are in the framework's `docs/GUIDE.md`, §12; read it and §2–§4 first. The project's agent instructions say where the framework and the KB are.
+You run a reconciliation session for the project's lessons-learned KB. Normal sessions only add records and edit lesson metadata (evidence annotations, `coverage`, `verification`, `reviewed`); new findings that contradict a lesson are recorded as **conflicts** (`conflicts.json` in each KB directory). Reconciliation is the only time what a lesson says, or where it applies, changes: resolving conflicts, and heavy reworking such as rewording, splitting, merging and re-levelling. The rules are in the framework's `docs/GUIDE.md`, §12; read it and §2–§4 first. The project's agent instructions say where the framework and the KB are.
 
 Run `kbcli` from the project directory that holds `lessons-kb.json`, or from below it (`python kbcli.py` from the framework checkout if it isn't installed). Use `--reconcile` on every write, or `export LESSONS_KB_MODE=reconcile`.
 
@@ -32,12 +32,13 @@ Run `kbcli` from the project directory that holds `lessons-kb.json`, or from bel
 5. **Add links.** Where one lesson builds on, supports or qualifies another, set `references` on it (`[{"id": …, "rel": "builds_on"|"supports"|"qualifies"|"see_also"}]`). `referenced_by` is derived; never set it.
 6. **Fill `context`** (`systems`, `observables`, `methods`, `conditions`; GUIDE §3) on every lesson you touch. Use the profile's observable names (`kbcli profiles <name>`).
 7. **Close the conflict:** `conflict resolve C --action … --result … --note "<one-line reason>"`.
-8. **Finish:** `validate --strict` (merged, and `--no-project`), `supplement --all`, `render`.
+8. **Finish:** `validate --strict` (merged, and `--no-project`), `supplement --all` (every lesson, each into its KB's folder), `render`.
 
 ## Rules
 - Shared lessons must make sense outside this project: no run labels, model ids, project script or directory names, or lesson ids in titles and text (GUIDE §2).
 - Evidence or nothing: every number in a lesson must be traceable to its evidence (GUIDE §4 rule 1).
 - One lesson, one statement; keep text under about 600 characters (GUIDE §4 rule 3).
+- Claim only the coverage you have: a replacement that says *every*, *all*, *always*, *never* or *must* lists its cases in `coverage`, or is worded more narrowly (GUIDE §4 rule 9). `validate` warns on the ones that don't; reword those you touch.
 - Don't record new findings of your own as lessons in the same pass. If you find an unlogged contradiction, record it with `conflict add` and leave it for the next session.
 - Never hand-edit `db/*.json`, `db_project/*.json` or `conflicts.json`.
 

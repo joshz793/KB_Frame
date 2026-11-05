@@ -41,9 +41,9 @@ The rules for readers, writers and profile authors are in [docs/GUIDE.md](docs/G
   - normalized identities;
   - dangling references.
 
-  It warns on a lesson that holds several statements, a tag that widens a lesson, and copied seeded text.
+  It warns on a lesson that holds several statements, a tag that widens a lesson, universal wording (*every*, *all*, *always*, *never*, *must*) without listed coverage, and copied seeded text.
 - **Locked, atomic writes** with automatic backups. Several sessions can write concurrently, and a failed write changes nothing and prints no success line.
-- **Append-only by default.** Normal sessions add lessons, systems and models, add to lists, and fill empty fields once. Editing, superseding, moving or removing existing lessons needs `--reconcile`.
+- **Append-only by default, except metadata.** Normal sessions add lessons, systems and models, add to lists, and fill empty fields once. They may also edit a lesson's metadata: evidence annotations (`evidence`: kind, lines, quote, what it supports, the run), `coverage`, `verification` records (`verify`) and `reviewed`. Changing what a lesson says or where it applies, superseding, moving or removing it needs `--reconcile`.
 
 **Shared and project knowledge**
 - **Two kinds of KB, read together.**
@@ -62,8 +62,9 @@ The rules for readers, writers and profile authors are in [docs/GUIDE.md](docs/G
   Removed lessons are archived in the conflict, and changes made without a conflict are kept as closed records, so every change is on file.
 
 **Evidence that travels**
-- **Supplements** (`supplement`): copies of the files the shared lessons cite, plus the scripts and tables those documents name.
-  - They are stored by the level a lesson applies at, with a manifest and checksums.
+- **Supplements** (`supplement`): copies of the files lessons cite, plus the scripts and tables those documents name.
+  - One folder per kind of KB: the shared folder (committed with the shared KB) and a project folder inside each project KB, so project evidence never travels with the shared knowledge. `--all` copies every lesson's evidence into its own folder; `--shared` and `--project` do one kind.
+  - Inside a folder, copies are stored by the level a lesson applies at, with a manifest and checksums.
   - Large outputs can be stored as line excerpts.
   - `validate` reports missing copies, changed copies, and originals that changed after copying.
 
@@ -73,7 +74,7 @@ The rules for readers, writers and profile authors are in [docs/GUIDE.md](docs/G
 - `generic`, for any molecule or cluster, is built in. A project adds its own profiles through `lessons-kb.json`. GUIDE §8 covers writing and tuning one.
 
 **Interfaces**
-- **CLI:** `kbcli` with 29 commands (`kbcli -h`), all with machine-readable output (`--json`).
+- **CLI:** `kbcli` with 31 commands (`kbcli -h`), all with machine-readable output (`--json`).
 - **Python library:** `lessons_kb`, with `transaction()`, `KB`, profiles, conflicts and supplements.
 - **Config:** `lessons-kb.json`, found by searching upward from the working directory.
 - **Moving knowledge between KBs:** `split`, `merge` (field-level, with a conflict report), `condense` and `rehash` (new ids after a profile version change).
@@ -132,6 +133,7 @@ ln -s <checkout>/agents/kb-reconciler.md ~/.claude/agents/kb-reconciler.md
 | `src/lessons_kb/` | the library: `core` (data model, validation, locking, routing, conflicts), `profile`, `geometry`, `supplements`, `config`, `cli` |
 | `src/lessons_kb/profiles/generic/` | the built-in profile, with its README, calibration and tests |
 | `docs/GUIDE.md` | the rules: data model, writing, CLI, storage, conflicts and reconciliation, writing a profile |
+| `docs/FILES.md` | every file and folder kbcli writes, when, and for which use case |
 | `agents/kb-reconciler.md` | Claude Code agent for reconciliation sessions |
 | `tests/test_core.py` | `python tests/test_core.py` |
 | `kbcli.py` | runs the CLI from a checkout without installing |

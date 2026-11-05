@@ -49,7 +49,20 @@ MODEL_KEYS = ('id', 'status', 'dir', 'level_of_theory', 'model_details', 'purpos
               'docs', 'notes', 'date', 'updated')
 LESSON_KEYS = ('id', 'title', 'text', 'category', 'scope', 'applies_to', 'evidence', 'confidence', 'source',
                'status', 'superseded_by', 'date', 'updated', 'author', 'seeded_from_docs', 'reviewed', 'tags',
-               'context', 'references', 'referenced_by')
+               'context', 'references', 'referenced_by', 'coverage', 'verification')
+# an evidence entry: path (required, never changed) and note, plus optional keys that make the claim checkable
+# (GUIDE §3); supplement and sha256 are written by `kbcli supplement`
+EVIDENCE_KEYS = ('path', 'note', 'kind', 'lines', 'quote', 'supports', 'model', 'supplement', 'sha256')
+EVIDENCE_KINDS = ('output', 'input', 'analysis', 'note', 'literature')
+# a verification record: one check of a lesson's claims against its evidence (appended, newest last)
+VERIFICATION_KEYS = ('date', 'by', 'method', 'verdict', 'note')
+VERIFY_METHODS = ('agent', 'person')
+VERDICTS = ('supported', 'partly', 'not_supported', 'cannot_verify')
+# metadata: lesson fields that say how well the claim is supported, not what it claims or where it applies.
+# Normal sessions may edit them; everything else changes only in reconciliation sessions (GUIDE §1, §12)
+LESSON_METADATA = ('evidence', 'coverage', 'verification', 'reviewed')
+# universal wording that needs coverage (GUIDE §4 rule 9); hyphenated compounds such as all-electron don't count
+UNIVERSAL_WORDS = re.compile(r'(?<![\w\-‐‑])(every|all|always|never|must)(?![\w\-‐‑])', re.I)
 # links between lessons (GUIDE §3): a lesson's own `references` say how it relates to others; `referenced_by` is
 # derived on every load and save from references, superseded_by and conflicts, never written by hand
 REF_RELS = ('builds_on', 'supports', 'qualifies', 'see_also')
@@ -147,6 +160,62 @@ def norm_context(c):
             raise KBError(f'context.{k} must be a list of non-empty strings')
         out[k] = [x.strip() for x in v]
     return out
+
+
+def _str_list(v, what):
+    v = [v] if isinstance(v, str) else (v or [])
+    if not isinstance(v, list) or not all(isinstance(x, str) and x.strip() for x in v):
+        raise KBError(f'{what} must be a list of non-empty strings')
+    return [x.strip() for x in v]
+
+
+def norm_lines(v):
+    '''"A-B" (or "A") from "A-B", "A", an int or [A, B]; raises KBError on anything else'''
+    if isinstance(v, int) and not isinstance(v, bool):
+        v = [v, v]
+    elif isinstance(v, str) and re.fullmatch(r'\s*\d+\s*(-\s*\d+\s*)?', v):
+        v = [int(x) for x in v.split('-')] * (1 if '-' in v else 2)
+    if not (isinstance(v, (list, tuple)) and len(v) == 2 and all(isinstance(x, int) and x > 0 for x in v)
+            and v[0] <= v[1]):
+        raise KBError(f'evidence lines must be "A-B" with 0 < A <= B, not {v!r}')
+    return f'{v[0]}' if v[0] == v[1] else f'{v[0]}-{v[1]}'
+
+
+def norm_evidence_entry(e):
+    '''an evidence entry with its optional keys checked (GUIDE §3); unknown keys are kept (validate warns)'''
+    if not isinstance(e, dict) or not isinstance(e.get('path'), str) or not e['path'].strip():
+        raise KBError(f'evidence entries are {{path, note, ...}}, not {e!r}')
+    e = dict(e)
+    if e.get('kind') is not None and e['kind'] not in EVIDENCE_KINDS:
+        raise KBError(f"evidence kind must be one of {EVIDENCE_KINDS}, not {e['kind']!r}")
+    if e.get('lines') is not None:
+        e['lines'] = norm_lines(e['lines'])
+    for k in ('note', 'quote', 'supports', 'model'):
+        if e.get(k) is not None and not isinstance(e[k], str):
+            raise KBError(f'evidence {k} must be a string')
+    return e
+
+
+def norm_verification(v):
+    '''[{date, by, method, verdict, note?}] (one record per check, newest last); raises KBError on anything else'''
+    out = []
+    for r in [v] if isinstance(v, dict) else (v or []):
+        if not isinstance(r, dict) or set(r) - set(VERIFICATION_KEYS):
+            raise KBError(f'verification records are {{{", ".join(VERIFICATION_KEYS)}}}, not {r!r}')
+        r = dict(r)
+        r.setdefault('date', today()); r.setdefault('by', ''); r.setdefault('method', 'agent')
+        if r.get('verdict') not in VERDICTS:
+            raise KBError(f"verification verdict must be one of {VERDICTS}, not {r.get('verdict')!r}")
+        if r['method'] not in VERIFY_METHODS:
+            raise KBError(f"verification method must be one of {VERIFY_METHODS}, not {r['method']!r}")
+        out.append(r)
+    return out
+
+
+def universal_words(lesson):
+    '''the universal words (every, all, always, never, must) in a lesson's title and text, lower-cased'''
+    return sorted({m.group(1).lower() for m in UNIVERSAL_WORDS.finditer(f"{lesson.get('title', '')} "
+                                                                           f"{lesson.get('text', '')}")})
 
 
 def norm_references(refs):
@@ -265,6 +334,12 @@ def make_lesson(d):
         l['context'] = norm_context(l['context'])
     if 'references' in l:
         l['references'] = norm_references(l['references'])
+    if isinstance(l.get('evidence'), list):
+        l['evidence'] = [norm_evidence_entry(e) for e in l['evidence']]
+    if 'coverage' in l:
+        l['coverage'] = _str_list(l['coverage'], 'coverage')
+    if 'verification' in l:
+        l['verification'] = norm_verification(l['verification'])
     l.pop('referenced_by', None)                     # derived, never taken from input
     for k in ('title', 'text', 'category'):
         if not l.get(k):
@@ -771,6 +846,24 @@ class KB:
             if l.get('status') == 'active' and len(l['text']) > LESSON_TEXT_WARN:
                 W.append(f"{tag}: text is {len(l['text'])} characters; one lesson, one statement (GUIDE §4 rule 3): "
                          'consider splitting it')
+            # metadata (GUIDE §3): evidence keys, coverage, verification
+            for e in ev or []:
+                try:
+                    norm_evidence_entry(e)
+                except KBError as x:
+                    E.append(f'{tag}: {x}'); continue
+                if set(e) - set(EVIDENCE_KEYS):
+                    W.append(f"{tag}: evidence {e['path']} has unknown key(s) {sorted(set(e) - set(EVIDENCE_KEYS))}")
+            for k, norm in (('coverage', lambda v: _str_list(v, 'coverage')), ('verification', norm_verification)):
+                if k in l:
+                    try:
+                        norm(l[k])
+                    except KBError as x:
+                        E.append(f'{tag}: {x}')
+            words = universal_words(l) if l.get('status') == 'active' else []
+            if words and not l.get('coverage'):
+                W.append(f"{tag}: says {', '.join(repr(w) for w in words)} without coverage (GUIDE §4 rule 9): list "
+                         'the cases the evidence covers in `coverage`, or narrow the wording in a reconciliation session')
         # links between lessons
         for lid, l in self.lessons.items():
             try:
@@ -913,16 +1006,31 @@ class KB:
         return l['id']
 
     def update_lesson(self, lid, fields, replace=False):
-        '''set mutable fields. evidence and applies_to are extended, other fields are set; replace=True replaces
-        applies_to instead (to narrow where a lesson applies). Evidence is never removed: supersede instead.'''
-        self._guard(f'editing lesson {lid}')
+        '''set mutable fields. Normal sessions may edit only the metadata (LESSON_METADATA); the rest needs
+        reconcile mode. evidence entries are matched by path (and by index or lines when several cite one path):
+        their keys are set (None removes one), and entries with a new path are appended. Evidence is never removed
+        and its path never changes: supersede or replace the lesson instead. applies_to is extended, or replaced
+        with replace=True (to narrow where a lesson applies); other fields are set.'''
+        if self.mode == 'general':
+            bad = [k for k in fields if k not in LESSON_METADATA]
+            if bad or replace:
+                self._guard(f"editing {', '.join(bad) or 'applies_to'} of lesson {lid} (normal sessions may edit "
+                            f"only the metadata: {', '.join(LESSON_METADATA)})")
         l = self._lesson(lid)
         for k in fields:
             if k in LESSON_IMMUTABLE or k not in LESSON_KEYS:
                 raise KBError(f'cannot edit lesson field {k!r}; supersede the lesson instead')
         for k, v in fields.items():
             if k == 'evidence':
-                l['evidence'] = _merge_val(l['evidence'], v, [lid, k], [], True)
+                l['evidence'] = self._patch_evidence(lid, l['evidence'], v)
+            elif k == 'coverage':
+                l['coverage'] = _str_list(v, 'coverage')
+            elif k == 'verification':
+                l['verification'] = norm_verification(v)
+            elif k == 'reviewed':
+                if not isinstance(v, bool):
+                    raise KBError('reviewed must be true or false')
+                l['reviewed'] = v
             elif k == 'references':
                 l['references'] = norm_references(v)
                 self._check_refs(l)
@@ -942,6 +1050,51 @@ class KB:
                     l['applies_to'][kk] = sorted(set(l['applies_to'].get(kk, [])) | set(vv))
             else:
                 l[k] = copy.deepcopy(v)
+        l['updated'] = now()
+
+    @staticmethod
+    def _patch_evidence(lid, current, patch):
+        out = [dict(e) for e in current]
+        for p in [patch] if isinstance(patch, dict) else patch:
+            if not isinstance(p, dict) or not p.get('path'):
+                raise KBError(f'evidence patches are {{path, ...}}, not {p!r}')
+            p = dict(p); idx = p.pop('index', None)
+            hits = [i for i, e in enumerate(out) if e['path'] == p['path']]
+            if idx is not None:
+                if idx not in hits:
+                    raise KBError(f"lesson {lid}: evidence entry {idx} does not cite {p['path']}")
+                hits = [idx]
+            elif len(hits) > 1:
+                same = [i for i in hits if p.get('lines') and out[i].get('lines') == norm_lines(p['lines'])]
+                if len(same) != 1:
+                    raise KBError(f"lesson {lid}: {len(hits)} evidence entries cite {p['path']} (entries {hits}); "
+                                  'give "index" to choose one')
+                hits = same
+            if not hits:
+                if not p.get('note'):
+                    raise KBError(f"lesson {lid}: a new evidence entry ({p['path']}) needs a note")
+                if set(p) & {'supplement', 'sha256'}:
+                    raise KBError('supplement and sha256 are written by `kbcli supplement`')
+                out.append(norm_evidence_entry({k: v for k, v in p.items() if v is not None}))
+                continue
+            e = out[hits[0]]
+            for k, v in p.items():
+                if k == 'path':
+                    continue
+                if k in ('supplement', 'sha256'):
+                    if v != e.get(k):
+                        raise KBError('supplement and sha256 are written by `kbcli supplement`')
+                elif v is None:
+                    e.pop(k, None)
+                else:
+                    e[k] = v
+            out[hits[0]] = norm_evidence_entry(e)
+        return out
+
+    def add_verification(self, lid, record):
+        '''append one verification record {verdict, by, method, note?, date?} to a lesson (allowed in any mode)'''
+        l = self._lesson(lid)
+        l['verification'] = norm_verification(l.get('verification')) + norm_verification(record)
         l['updated'] = now()
 
     def supersede(self, old, new):
@@ -1369,8 +1522,14 @@ class KB:
                 L.append(f"- **{l['title']}** (`{l['id']}`, {l['category']}, {l['confidence']}, {l['source']}"
                          f"{', ' + flags if flags else ''}){' — ' + who if who else ''}")
                 L.append(f"  {l['text']}")
-                L.append('  Evidence: ' + '; '.join(f"`{e['path']}`" + (f" ({e['note']})" if e.get('note') else '')
-                                                   for e in l['evidence']))
+                L.append('  Evidence: ' + '; '.join(f"`{e['path']}`" + (f":{e['lines']}" if e.get('lines') else '')
+                                                   + (f" ({e['note']})" if e.get('note') else '') for e in l['evidence']))
+                if l.get('coverage'):
+                    L.append('  Coverage: ' + '; '.join(l['coverage']))
+                if l.get('verification'):
+                    v = l['verification'][-1]
+                    L.append(f"  Verification: {v['verdict'].replace('_', ' ')} ({v['date']}, {v['method']}"
+                             f"{', ' + v['by'] if v.get('by') else ''}){': ' + v['note'] if v.get('note') else ''}")
                 name = lambda i: f"{self.lessons[i]['title']} (`{i}`)" if i in self.lessons else f'`{i}`'
                 if l.get('references'):
                     L.append('  References: ' + '; '.join(f"{r['rel']} {name(r['id'])}" for r in l['references']))

@@ -378,6 +378,56 @@ class TestSupplements(unittest.TestCase):
             supp.sync(kb, root, [])
             self.assertEqual(kb.lessons[l2]['evidence'][0]['supplement'], rel)
 
+    def test_folder_per_kb(self):
+        '''shared lessons' copies go beside the shared KB, project lessons' inside the project KB; copies made into
+        the shared folder by earlier versions move to the project folder, even when the original is gone'''
+        from lessons_kb import supplements as supp
+        from lessons_kb.config import load_config
+        with tempfile.TemporaryDirectory() as d:
+            run = lambda *a: subprocess.run([sys.executable, os.path.join(ROOT, 'kbcli.py')] + list(a), cwd=d,
+                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+            with open(os.path.join(d, 'lessons-kb.json'), 'w') as f:
+                json.dump({'shared': 'db', 'project': ['db_project']}, f)
+            for a in (['init'], ['--db', 'db_project', 'init']):
+                self.assertEqual(run(*a).returncode, 0)
+            gen_f, sys_f = os.path.join(d, 'general.txt'), os.path.join(d, 'system.log')
+            for f in (gen_f, sys_f):
+                with open(f, 'w') as fh:
+                    fh.write(f + '\n')
+            db, dbp = os.path.join(d, 'db'), os.path.join(d, 'db_project')
+            shared_root, proj_root = os.path.join(d, 'supplements'), os.path.join(dbp, 'supplements')
+            with transaction([('shared', db), ('project', dbp)]) as k:
+                k.add_system(build_system(GEN, {'formula': 'H2O', 'multiplicity': 1}, {}))
+                w = GEN.system_id({'formula': 'H2O', 'charge': 0, 'multiplicity': 1})
+                g = k.add_lesson({'title': 'g', 'text': 'g', 'category': 'method', 'scope': 'general',
+                                  'evidence': [{'path': gen_f, 'note': 'n'}], 'context': CTX})
+                s = k.add_lesson({'title': 's', 'text': 's', 'category': 'method', 'scope': 'system',
+                                  'applies_to': {'systems': [w]}, 'evidence': [{'path': sys_f, 'note': 'n'}],
+                                  'context': CTX})
+                supp.sync(k, shared_root, [g, s])                 # the old layout: one folder for everything
+            os.remove(sys_f)
+            r = run('validate'); self.assertIn('cited only by project lessons', r.stdout + r.stderr)
+            self.assertEqual(run('supplement', '--shared').returncode, 0)       # keeps the copy a project lesson needs
+            self.assertTrue(os.path.isfile(os.path.join(shared_root, 'system/H2O/system.log')))
+            r = run('supplement', '--all'); self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertFalse(os.path.exists(os.path.join(shared_root, 'system')))
+            self.assertEqual(read(os.path.join(proj_root, 'system/H2O/system.log')), sys_f + '\n')
+            self.assertEqual(supp.load_manifest(proj_root)['files']['system/H2O/system.log']['source'], sys_f)
+            self.assertTrue(os.path.isfile(os.path.join(shared_root, 'general/general.txt')))
+            r = run('validate'); self.assertIn('0 errors, 0 warnings', r.stdout, r.stdout + r.stderr)
+            r = run('supplement', '--project'); self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertNotIn(shared_root + ':', r.stdout)                      # --project leaves the shared folder
+            self.assertNotEqual(run('supplement', '--all', s).returncode, 0)   # ids or a set, not both
+            # the config may name both folders
+            with open(os.path.join(d, 'lessons-kb.json'), 'w') as f:
+                json.dump({'shared': 'db', 'supplements': {'shared': 'sup', 'project': 'psup'}}, f)
+            cfg = load_config(os.path.join(d, 'lessons-kb.json'))
+            self.assertEqual(cfg['supplements'], {'shared': os.path.join(d, 'sup'), 'project': os.path.join(d, 'psup')})
+            with open(os.path.join(d, 'lessons-kb.json'), 'w') as f:
+                json.dump({'shared': 'db', 'supplements': {'other': 'x'}}, f)
+            with self.assertRaises(ValueError):
+                load_config(os.path.join(d, 'lessons-kb.json'))
+
 
 class TestModesAndConflicts(unittest.TestCase):
     def _db(self, d):
@@ -685,6 +735,102 @@ class TestRender(unittest.TestCase):
         kb, _ = sample_kb()
         md = kb.render()
         self.assertIn('H2O', md); self.assertIn('Scope: general', md)
+
+
+class TestMetadata(unittest.TestCase):
+    def _db(self, d):
+        kb, w = sample_kb()
+        db = os.path.join(d, 'db'); os.makedirs(db); kb.save_shards(db, backup=False)
+        return kb, db, next(i for i, l in kb.lessons.items() if l['title'] == 'general')
+
+    def test_metadata_editable_in_general_mode(self):
+        with tempfile.TemporaryDirectory() as d:
+            kb, db, lid = self._db(d)
+            with transaction(db) as k:
+                k.update_lesson(lid, {'evidence': [{'path': '/dev/null', 'kind': 'output', 'lines': '3-5',
+                                                    'quote': 'E = -1.0', 'supports': 'the energy'}],
+                                      'coverage': ['water'], 'reviewed': True})
+                k.update_lesson(lid, {'evidence': [{'path': '/dev/zero', 'note': 'second file'}]})
+                k.add_verification(lid, {'verdict': 'partly', 'by': 'tester', 'note': 'one claim'})
+            l = KB.load(db).lessons[lid]
+            self.assertEqual(len(l['evidence']), 2)                     # annotated in place, then one appended
+            self.assertEqual(l['evidence'][0], {'path': '/dev/null', 'note': 'test', 'kind': 'output', 'lines': '3-5',
+                                                'quote': 'E = -1.0', 'supports': 'the energy'})
+            self.assertEqual((l['coverage'], l['reviewed']), (['water'], True))
+            self.assertEqual(l['verification'][-1]['verdict'], 'partly')
+            self.assertEqual(l['id'], lid)                              # metadata is not part of the id
+            with transaction(db) as k:                                  # None removes a key
+                k.update_lesson(lid, {'evidence': [{'path': '/dev/null', 'quote': None}]})
+            self.assertNotIn('quote', KB.load(db).lessons[lid]['evidence'][0])
+            for bad in ({'confidence': 'established'}, {'tags': ['x']}, {'context': CTX},
+                        {'evidence': [{'path': '/dev/zero', 'supplement': 'general/zero'}]},   # written by supplement
+                        {'evidence': [{'path': '/new', 'kind': 'output'}]},                    # a new entry needs a note
+                        {'evidence': [{'path': '/dev/null', 'kind': 'guess'}]},
+                        {'evidence': [{'path': '/dev/null', 'lines': '9-2'}]},
+                        {'verification': [{'verdict': 'fine'}]}):
+                with self.assertRaises(KBError):
+                    with transaction(db) as k:
+                        k.update_lesson(lid, bad)
+            with self.assertRaises(KBError):                            # narrowing applies_to is reconciliation
+                with transaction(db) as k:
+                    k.update_lesson(lid, {'coverage': ['water']}, replace=True)
+
+    def test_evidence_entries_sharing_a_path(self):
+        with tempfile.TemporaryDirectory() as d:
+            kb, db, lid = self._db(d)
+            with transaction(db) as k:
+                k.update_lesson(lid, {'evidence': [{'path': '/dev/null', 'note': 'other lines', 'lines': '10-12'}]})
+            self.assertEqual(len(KB.load(db).lessons[lid]['evidence']), 1)    # same path: annotated, not appended
+            with transaction(db, mode='reconcile') as k:
+                k.lessons[lid]['evidence'].append({'path': '/dev/null', 'note': 'second', 'lines': '20'})
+            with self.assertRaises(KBError):                            # ambiguous without index or matching lines
+                with transaction(db) as k:
+                    k.update_lesson(lid, {'evidence': [{'path': '/dev/null', 'quote': 'q'}]})
+            with transaction(db) as k:
+                k.update_lesson(lid, {'evidence': [{'path': '/dev/null', 'index': 1, 'quote': 'q1'}]})
+                k.update_lesson(lid, {'evidence': [{'path': '/dev/null', 'lines': '10-12', 'quote': 'q0'}]})
+            ev = KB.load(db).lessons[lid]['evidence']
+            self.assertEqual([e.get('quote') for e in ev], ['q0', 'q1'])
+
+    def test_universal_words(self):
+        kb, _ = sample_kb()
+        base = {'category': 'method', 'scope': 'general', 'evidence': EV, 'context': CTX}
+        ids = {t: kb.add_lesson(dict(base, title=t, text=x)) for t, x in (
+            ('u1', 'This holds for every spin state.'), ('u2', 'All-electron and never-converging runs differ.'),
+            ('u3', 'Always restart from converged orbitals.'), ('u4', 'You must check the orbitals.'))}
+        _, W = kb.validate()
+        flagged = {i for i in ids.values() if any(i in w and 'without coverage' in w for w in W)}
+        self.assertEqual(flagged, {ids['u1'], ids['u3'], ids['u4']})    # hyphenated compounds are not flagged
+        kb.mode = 'general'
+        kb.update_lesson(ids['u1'], {'coverage': ['singlet', 'triplet']})
+        _, W = kb.validate()
+        self.assertFalse(any(ids['u1'] in w and 'without coverage' in w for w in W))
+
+    def test_cli_evidence_and_verify(self):
+        with tempfile.TemporaryDirectory() as d:
+            kb, db, lid = self._db(d)
+            run = lambda *a: subprocess.run([sys.executable, os.path.join(ROOT, 'kbcli.py'), '--db', db] + list(a),
+                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+            r = run('evidence', lid, '--path', '/dev/null', '--kind', 'output', '--lines', '7', '--quote', 'x')
+            self.assertEqual(r.returncode, 0, r.stderr)
+            r = run('verify', lid, '--verdict', 'supported', '--by', 'tester')
+            self.assertEqual(r.returncode, 0, r.stderr)
+            l = KB.load(db).lessons[lid]
+            self.assertEqual((l['evidence'][0]['lines'], l['verification'][0]['verdict']), ('7', 'supported'))
+            md = KB.load(db).render()
+            self.assertIn('Verification: supported', md); self.assertIn('/dev/null`:7', md)
+
+    def test_supplement_base_of_one_cited_file(self):
+        from lessons_kb import supplements as supp
+        with tempfile.TemporaryDirectory() as d:
+            src = os.path.join(d, 'run', 'out.txt'); os.makedirs(os.path.dirname(src))
+            with open(src, 'w') as f:
+                f.write('E = -1\n')
+            kb = KB()
+            lid = kb.add_lesson({'title': 't', 'text': 'x', 'category': 'method', 'scope': 'general',
+                                 'evidence': [{'path': src, 'note': 'n'}]})
+            supp.sync(kb, os.path.join(d, 'supplements'), [lid])
+            self.assertEqual(supp.load_manifest(os.path.join(d, 'supplements'))['base'], os.path.dirname(src))
 
 
 if __name__ == '__main__':
