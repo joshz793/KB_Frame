@@ -667,11 +667,78 @@ class KB:
         be shared, else project'''
         if self.sources is None:
             return SHARED
-        roles = {self.role_of('lessons', x) for x in c.get('contradicts', []) if x in self.lessons}
+        # a lesson removed in this transaction still has its origin, so its record goes where the lesson was
+        roles = {self.role_of('lessons', x) for x in c.get('contradicts', [])
+                 if x in self.lessons or ('lessons', x) in self.origin}
         if not roles and c.get('kind') == 'direct':
             roles = {c.get('role', SHARED)}
         finding_ok = not c.get('finding') or route_new('lessons', c['finding']) == SHARED
         return SHARED if roles == {SHARED} and finding_ok else PROJECT
+
+    def conflict_home(self, cid):
+        '''the role of the KB that holds (or will hold) conflict cid'''
+        if self.sources is None:
+            return SHARED
+        p = self.conflict_origin.get(cid)
+        if p:
+            return dict((q, r) for r, q in self.sources)[p]
+        return self.conflict_role(self.conflicts[cid])
+
+    def _shared_names(self):
+        '''lesson ids the shared KB names: its lessons and every id its lessons and conflicts point at'''
+        roles = dict((p, r) for r, p in self.sources)
+        names = set()
+        for p, part in self.source_parts().items():
+            if roles[p] != SHARED:
+                continue
+            names |= set(part.lessons)
+            for l in part.lessons.values():
+                names |= set(successors(l)) | {r['id'] for r in l.get('references') or []}
+            for c in part.conflicts.values():
+                r = c.get('resolution') or {}
+                names |= (set(c.get('contradicts', [])) | set(r.get('result_ids', [])) |
+                          {a.get('id') for a in r.get('archived', [])})
+        return names
+
+    def trace_archive(self, cid, by=''):
+        '''keep the shared KB standalone when a conflict stored in a project KB archived shared lessons: add to the
+        shared KB a closed direct record holding copies of those lessons and naming their shared successors.
+        resolve_conflict() and record_direct() call it; kbcli conflict trace runs it for records made before 0.3.1.
+        A lesson counts as shared if it was loaded from a shared source or, once its origin is gone, if the shared
+        KB names it. Returns the new record's id, or None when none is needed (or it exists).'''
+        if self.sources is None or self.conflict_home(cid) == SHARED:
+            return None
+        c = self._conflict(cid)
+        r = c.get('resolution') or {}
+        names = None
+        def shared(a):
+            nonlocal names
+            if ('lessons', a.get('id')) in self.origin:
+                return self.role_of('lessons', a['id']) == SHARED
+            if names is None:
+                names = self._shared_names()
+            return a.get('id') in names
+        arch = [a for a in r.get('archived', []) if shared(a)]
+        if not arch:
+            return None
+        tid = 'C-' + hashlib.sha256(('trace|' + cid).encode()).hexdigest()[:10]
+        if tid in self.conflicts:
+            return None
+        ids = sorted(a['id'] for a in arch)
+        results = [x for x in r.get('result_ids', []) if x in self.lessons and self.role_of('lessons', x) == SHARED]
+        ctx = next((a['context'] for a in arch if context_ok(a.get('context'))), {'methods': ['KB reconciliation']})
+        why = (f"{', '.join(ids)} {'were' if len(ids) > 1 else 'was'} removed ({r.get('action')}) when a conflict "
+               'stored in a project KB was resolved; ' +
+               (f"{', '.join(results)} now carr{'y' if len(results) > 1 else 'ies'} its content in this KB."
+                if results else 'no lesson in this KB carries its content.'))
+        who = by or r.get('by', '')
+        self.conflicts[tid] = {'id': tid, 'date': r.get('date') or today(), 'author': who, 'status': 'resolved',
+                               'kind': 'direct', 'role': SHARED, 'trace_of': cid, 'contradicts': ids,
+                               'disagreement': why, 'context': ctx, 'finding': None,
+                               'resolution': {'action': r.get('action'), 'result_ids': results, 'archived': arch,
+                                              'note': why, 'by': who, 'date': r.get('date') or today()},
+                               'updated': now()}
+        return tid
 
     def check_sources(self):
         '''(errors, warnings) for the split into sources: a shared source must make sense without the project
@@ -699,11 +766,22 @@ class KB:
                 for e in l.get('evidence', []):
                     if any(str(e.get('path', '')).startswith(h) for h in homes):
                         W.append(f"shared lesson {lid} cites {e['path']}, in a home directory that others cannot read")
+            kept = {a.get('id') for c in part.conflicts.values()
+                    for a in (c.get('resolution') or {}).get('archived', [])}
             for cid, c in part.conflicts.items():
                 if c.get('status') == 'open':
                     for x in c.get('contradicts', []):
                         if x not in part.lessons and x in self.lessons:
                             E.append(f'shared conflict {cid} contradicts {x}, which is only in a project KB')
+                else:
+                    for x in (c.get('resolution') or {}).get('result_ids', []):
+                        if x in part.lessons or x in kept:
+                            continue
+                        if x in self.lessons:
+                            W.append(f'shared conflict {cid} names result {x}, which is only in a project KB')
+                        else:
+                            W.append(f'shared conflict {cid} names result {x}, which the shared KB neither holds nor '
+                                     'archives (archived only in a project KB): run kbcli.py --reconcile conflict trace')
         return E, W
 
     def save_sources(self, backup=True):
@@ -1280,6 +1358,8 @@ class KB:
                                               'archived': list(archived), 'note': why.strip(), 'by': by,
                                               'date': today()},
                                'updated': now()}
+        if archived:
+            self.trace_archive(cid, by)
         return cid
 
     def resolve_conflict(self, cid, action, result_ids=(), archived=(), note='', by=''):
@@ -1298,6 +1378,8 @@ class KB:
         c['resolution'] = {'action': action, 'result_ids': list(result_ids), 'archived': list(archived),
                            'note': note, 'by': by, 'date': today()}
         c['updated'] = now()
+        if archived:
+            self.trace_archive(cid, by)
 
     def _system(self, sid):
         if sid not in self.systems:

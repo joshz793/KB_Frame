@@ -39,7 +39,7 @@ Both KBs are optional beyond the shared one. A KB can also be a single JSON file
 | `general.json` | `kbcli init` | every write that changes it | General lessons, and lessons tied to no single profile. Always present, even when empty | yes |
 | `<profile>.json` | first write of a system or lesson for that profile | writes that change it; **deleted** when it becomes empty | The profile's systems (with their models) and the lessons tied to that profile alone | yes |
 | `platform_<site>.json` | first lesson with an `applies_to.platform` condition for that site | as above | Site knowledge (machines, filesystems, containers), kept apart so it can be dropped when exporting | yes |
-| `conflicts.json` | first `conflict add` stored in this KB, or the first change a reconciliation records | only when its content changes; never created empty | Open conflicts, resolved ones, and lessons archived by `replace` or `remove` | yes |
+| `conflicts.json` | first `conflict add` stored in this KB, or the first change a reconciliation records | only when its content changes; never created empty | Open conflicts, resolved ones, and lessons archived by `replace` or `remove`. A shared lesson archived by a project-KB conflict also gets a trace record in the shared file | yes |
 | `.lock` | first write | never (it stays empty) | Serializes writes from concurrent sessions (`flock`). Reads take no lock | no |
 | `backups/<shard>.json.<timestamp>` | before a shard is rewritten or deleted | the oldest are pruned past 20 per shard | Recovery from a bad write. `conflicts.json` is not backed up | no |
 | `<file>.tmp<pid>` | during a write | renamed over the target at once | Atomic writes. A leftover one means a write was interrupted; the target is intact | no |
@@ -115,7 +115,7 @@ db_project/
 | Adding a system, model or lesson | the shard(s) it lands in (routed to the shared or project KB), a backup of each shard rewritten, the `.lock` |
 | Recording a conflict | `conflicts.json` in the KB it is routed to |
 | Copying evidence | the shared and/or project `supplements/` folders (copies and `MANIFEST.json`), and the `supplement`/`sha256` links in the cited lessons' shards |
-| Reconciling | the shards of the lessons changed, and `conflicts.json` (resolutions and archived lessons) |
+| Reconciling | the shards of the lessons changed, and `conflicts.json` (resolutions and archived lessons; the shared one too when a project-KB conflict removes a shared lesson) |
 | Producing the digest | `LESSONS.md` beside the shared KB, and one inside each project KB directory |
 | Handing a focused KB to an agent | the `condense --out` file |
 | Exporting or bringing in another KB | `split --out` shards; `merge --out` file. To read another group's KB without merging, list it as a project KB; nothing is written to it unless records route there |

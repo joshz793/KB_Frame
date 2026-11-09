@@ -1,6 +1,6 @@
 # lessons-kb
 
-Repository: https://github.com/joshz793/KB_Frame · current release: `v0.3.0` · license: MIT
+Repository: https://github.com/joshz793/KB_Frame · current release: `v0.3.1` · license: MIT
 
 A lessons-learned knowledge base for computational work. People and AI agents (e.g. Claude Code) use it to record:
 - the systems they studied;
@@ -84,7 +84,7 @@ The rules for readers, writers and profile authors are in [docs/GUIDE.md](docs/G
 ## Install
 Python ≥ 3.6 with numpy:
 ```bash
-pip install "git+https://github.com/joshz793/KB_Frame.git@v0.3.0"    # provides the `kbcli` command
+pip install "git+https://github.com/joshz793/KB_Frame.git@v0.3.1"    # provides the `kbcli` command
 ```
 Or work from a checkout without installing:
 ```bash
@@ -94,7 +94,7 @@ python KB_Frame/kbcli.py profiles
 A project that keeps its KB in git can pin the framework as a submodule instead:
 ```bash
 git submodule add https://github.com/joshz793/KB_Frame.git framework
-git -C framework checkout v0.3.0
+git -C framework checkout v0.3.1
 ```
 Its own `kbcli.py` launcher then puts `framework/src` on the path (see `kbcli.py` here for the pattern), or it installs the submodule with `pip install -e framework`.
 

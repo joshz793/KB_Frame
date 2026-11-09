@@ -560,6 +560,48 @@ class TestModesAndConflicts(unittest.TestCase):
             self.assertEqual(run('conflicts', '--open').stdout.strip(), 'no conflicts')
             self.assertIn('0 open conflicts', run('validate', '--strict').stdout)
 
+    def test_shared_archive_trace(self):
+        '''a shared lesson replaced in a conflict stored in a project KB leaves its archive in the shared KB too'''
+        with tempfile.TemporaryDirectory() as d:
+            shared, proj = os.path.join(d, 'db'), os.path.join(d, 'db_project')
+            srcs = [('shared', shared), ('project', proj)]
+            run = lambda *a: subprocess.run([sys.executable, os.path.join(ROOT, 'kbcli.py'), '--db', shared,
+                                             '--project', proj] + list(a), check=True, stdout=subprocess.PIPE,
+                                            stderr=subprocess.PIPE, universal_newlines=True).stdout
+            for p in (shared, proj):
+                os.makedirs(p); KB().save_shards(p, backup=False)
+            les = lambda t: {'title': t, 'text': t, 'category': 'method', 'scope': 'general', 'evidence': EV,
+                             'context': CTX}
+            with transaction(srcs) as k:
+                a0, a, b = (k.add_lesson(les(t)) for t in ('old rule', 'shared rule', 'project rule'))
+                k.place(b, 'project')
+                c0 = k.add_conflict(les('old rule, restated'), [a0], 'restated')
+            with transaction(srcs, mode='reconcile') as k:        # a shared conflict whose result is a
+                k.resolve_conflict(c0, 'replace', [a], k.replace(a0, a))
+                cid = k.add_conflict(les('both rules, merged'), [a, b], 'they overlap')
+            self.assertEqual(KB.load(proj).conflicts[cid]['contradicts'], sorted([a, b]))   # mixed: project KB
+            with transaction(srcs, mode='reconcile') as k:
+                new = k.adopt_finding(cid)
+                k.resolve_conflict(cid, 'merge', [new], k.replace([a, b], new))
+            sh = KB.load(shared)
+            traces = [c for c in sh.conflicts.values() if c.get('trace_of') == cid]
+            self.assertEqual(len(traces), 1)
+            t = traces[0]
+            self.assertEqual(([x['id'] for x in t['resolution']['archived']], t['resolution']['result_ids']),
+                             ([a], [new]))                         # the project lesson b stays out of the shared KB
+            self.assertEqual(sh.validate()[1], [])                 # shared KB alone: no "result a is not in this KB"
+            # records made before 0.3.1 have no trace: validate says so, and conflict trace backfills from the names
+            with open(os.path.join(shared, 'conflicts.json')) as fh:
+                raw = json.load(fh)
+            raw['conflicts'].pop(t['id'])
+            with open(os.path.join(shared, 'conflicts.json'), 'w') as fh:
+                json.dump(raw, fh)
+            self.assertTrue(any('neither holds nor archives' in w for w in KB.load_sources(srcs).check_sources()[1]))
+            self.assertIn(f"{cid} -> {t['id']} (shared): {a}", run('--reconcile', 'conflict', 'trace'))
+            self.assertEqual(run('--reconcile', 'conflict', 'trace').strip(), 'nothing to trace')
+            self.assertEqual(KB.load(shared).validate()[1], [])
+            self.assertFalse(KB.load_sources(srcs).check_sources()[1])
+
 
 class TestLinks(unittest.TestCase):
     def test_references_and_mapped_replace(self):

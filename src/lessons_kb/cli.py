@@ -259,6 +259,9 @@ def main(argv=None, config_start=None):
     q = cs.add_parser('show', help='print a conflict with the lessons it contradicts'); q.add_argument('cid')
     q = cs.add_parser('adopt', help="add a conflict's finding as a lesson (reconciliation)"); q.add_argument('cid')
     q.add_argument('--into', choices=(SHARED, PROJECT))
+    q = cs.add_parser('trace', help='copy shared lessons archived only in project-KB conflicts into the shared KB '
+                      '(reconciliation; done automatically on resolve since 0.3.1)')
+    q.add_argument('cids', nargs='*', metavar='CID', help='conflicts to trace (default: every closed project-KB one)')
     q = cs.add_parser('resolve', help='close a conflict (reconciliation)'); q.add_argument('cid')
     q.add_argument('--action', required=True, choices=RESOLUTION_ACTIONS)
     q.add_argument('--result', nargs='*', default=[], metavar='LID', help='lessons that now carry the knowledge')
@@ -575,6 +578,20 @@ def main(argv=None, config_start=None):
                         if args.into and kb.sources is not None:
                             kb.place(lid, args.into)
                         emit(args, {'lesson': lid}, lid)
+                    elif args.ccmd == 'trace':
+                        kb._guard('tracing archived lessons')
+                        if kb.sources is None:
+                            raise KBError('trace needs a project KB (db_project/, --project or $LESSONS_KB_PROJECT)')
+                        cids = args.cids or sorted(x for x, cc in kb.conflicts.items() if cc.get('status') != 'open'
+                                                   and kb.conflict_home(x) == PROJECT)
+                        made = {}
+                        for x in cids:
+                            t = kb.trace_archive(x, by='kb-reconciler')
+                            if t:
+                                made[x] = t
+                        emit(args, {'traced': made}, '\n'.join(
+                            f"{x} -> {t} (shared): {', '.join(kb.conflicts[t]['contradicts'])}"
+                            for x, t in made.items()) or 'nothing to trace')
                     elif args.ccmd == 'resolve':
                         mapping = None
                         if args.map == ['auto']:

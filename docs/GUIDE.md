@@ -123,7 +123,7 @@ Inside each KB directory, records are split into shards:
 
 - **Shard routing is automatic.** Every write loads all the shards, applies your change, validates the whole KB, and writes back only the shards that changed. A record that changes shard (e.g. a lesson that gains a platform condition) moves by itself.
 - **Conflicts** (§12) live in `conflicts.json` inside each KB directory, beside the shards. A conflict that involves only shared lessons, with a finding that would be shared, is stored in the shared KB; any other conflict is stored in the project KB.
-- **Superseded and replaced lessons:** a superseded lesson stays in the KB it was in. A lesson removed by `replace` is archived inside the conflict that removed it.
+- **Superseded and replaced lessons:** a superseded lesson stays in the KB it was in. A lesson removed by `replace` is archived inside the conflict that removed it. When that conflict is stored in a project KB and the lesson was shared, the shared KB also gets a closed `direct` record holding the archived copy and naming its shared successors (field `trace_of`), so the shared KB still explains where the lesson went. Resolving does this automatically; `conflict trace` adds the record for conflicts resolved before 0.3.1.
 - **Bringing in another group's KB:** add it as another project KB with `--project PATH` (or `$LESSONS_KB_PROJECT`), or `merge` it into a file.
 - Backups of each shard (the last 20) go to `backups/` inside each KB directory.
 
@@ -297,6 +297,7 @@ kbcli links <lid>                      # everything a lesson points to and every
 kbcli --reconcile conflict resolve C-... --action replace --result <new> --replace <old>   # reconciliation only
 kbcli --reconcile conflict resolve C-... --action replace --result <n1> <n2> --replace <o1> <o2> --map <o1>=<n1> <o2>=<n2>
 kbcli --reconcile remove <lid> --why "..."   # drop a lesson without a successor (archived in conflicts.json)
+kbcli --reconcile conflict trace           # copy shared lessons archived only in project-KB conflicts into the shared KB
 kbcli supplement <lid> [--referenced]     # copy the files a lesson cites into its KB's supplements folder (§2)
 kbcli supplement --all --referenced       # every lesson, each into its own folder; files over --max-size (1M) are skipped
 kbcli supplement --shared | --project     # only the shared, or only the project, lessons
@@ -559,7 +560,7 @@ Any session may add a conflict, and edit lesson metadata (§1). Only a reconcili
 | `remove` | a lesson should go without a successor (e.g. on a user decision) | `--reconcile remove LID --why …` archives it in a closed `direct` record. It is refused while the lesson is another's only successor or an open conflict names it |
 
 - `conflict adopt C-…` adds a conflict's finding to the KB as a lesson, ready for one of the actions.
-- A change made without a logged conflict, e.g. on a user decision, is recorded as a closed record of kind `direct` (`kb.record_direct`). Every change to existing lessons is therefore on file in `conflicts.json`.
+- A change made without a logged conflict, e.g. on a user decision, is recorded as a closed record of kind `direct` (`kb.record_direct`). Every change to existing lessons is therefore on file in `conflicts.json`. A shared lesson removed by a record stored in a project KB is also archived in the shared KB (§2), and `validate` warns when a shared conflict names a result that the shared KB neither holds nor archives.
 - Before changing a lesson, run `links <lid>` to see what points at it.
 - The reconciler asks the user before acting when the choice is a scientific judgment that the evidence doesn't settle, when a lesson recording a user decision would change, or when a shared lesson would move to the project KB.
 - It fills `context` on every lesson it touches.
