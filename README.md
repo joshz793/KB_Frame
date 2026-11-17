@@ -1,6 +1,6 @@
 # lessons-kb
 
-Repository: https://github.com/joshz793/KB_Frame · current release: `v0.4.1` · license: MIT
+Repository: https://github.com/joshz793/KB_Frame · current release: `v0.5.0` · license: MIT
 
 A lessons-learned knowledge base for computational work. People and AI agents (e.g. Claude Code) use it to record:
 - the systems they studied;
@@ -79,12 +79,12 @@ The rules for readers, writers and profile authors are in [docs/GUIDE.md](docs/G
 - **Config:** `lessons-kb.json`, found by searching upward from the working directory.
 - **Moving knowledge between KBs:** `split`, `merge` (field-level, with a conflict report), `condense` and `rehash` (new ids after a profile version change).
 - **Requirements:** Python ≥ 3.6 and numpy only.
-- **Claude Code integration:** the `kb` plugin, which provides the `kb-reconciler` agent for reconciliation sessions.
+- **Claude Code integration:** the `kb` plugin: the `lessons-kb` skill (reading and writing the KB) and the `kb-reconciler` agent (reconciliation sessions). The skill is at `skills/lessons-kb/SKILL.md`, so tools that import skills from a repository can use it directly.
 
 ## Install
 Python ≥ 3.6 with numpy:
 ```bash
-pip install "git+https://github.com/joshz793/KB_Frame.git@v0.4.1"    # provides the `kbcli` command
+pip install "git+https://github.com/joshz793/KB_Frame.git@v0.5.0"    # provides the `kbcli` command
 ```
 Or work from a checkout without installing:
 ```bash
@@ -94,7 +94,7 @@ python KB_Frame/kbcli.py profiles
 A project that keeps its KB in git can pin the framework as a submodule instead:
 ```bash
 git submodule add https://github.com/joshz793/KB_Frame.git framework
-git -C framework checkout v0.4.1
+git -C framework checkout v0.5.0
 ```
 Its own `kbcli.py` launcher then puts `framework/src` on the path (see `kbcli.py` here for the pattern), or it installs the submodule with `pip install -e framework`.
 
@@ -121,7 +121,7 @@ In the project's always-loaded instructions (`CLAUDE.md` or `AGENTS.md`):
 - tell agents to read the KB before planning a calculation, and to write to it when a piece of work closes, following GUIDE §1 and §11;
 - say that the KB only grows in normal sessions, and contradictions go in as conflicts (GUIDE §4 rule 5, §12).
 
-Install the `kb` plugin, which provides the `kb-reconciler` agent. This repository is its own marketplace:
+Install the `kb` plugin, which provides the `lessons-kb` skill and the `kb-reconciler` agent. This repository is its own marketplace:
 ```bash
 claude plugin marketplace add joshz793/KB_Frame
 claude plugin install kb@kb-frame
@@ -136,6 +136,7 @@ To load the agent from a local checkout or a pinned submodule instead, add the c
 | `src/lessons_kb/profiles/generic/` | the built-in profile, with its README, calibration and tests |
 | `docs/GUIDE.md` | the rules: data model, writing, CLI, storage, conflicts and reconciliation, writing a profile |
 | `docs/FILES.md` | every file and folder kbcli writes, when, and for which use case |
+| `skills/lessons-kb/SKILL.md` | Claude Code skill: the read-before, write-after routine and the rules, short form of the GUIDE |
 | `agents/kb-reconciler.md` | Claude Code agent for reconciliation sessions |
 | `.claude-plugin/` | the `kb` plugin manifest and this repository's marketplace |
 | `tests/test_core.py` | `python tests/test_core.py` |

@@ -6,7 +6,7 @@
     {
       "name": "kb",
       "source": "./",
-      "description": "kb-reconciler agent for reconciliation sessions on a lessons-learned KB."
+      "description": "lessons-kb skill and kb-reconciler agent for a lessons-learned KB."
     }
   ]
 }

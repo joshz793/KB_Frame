@@ -1,7 +1,7 @@
 {
   "name": "kb",
-  "version": "0.4.1",
-  "description": "The lessons-kb framework's Claude Code agent: kb-reconciler, for reconciliation sessions on a lessons-learned KB.",
+  "version": "0.5.0",
+  "description": "The lessons-kb framework for Claude Code: the lessons-kb skill (read and write a project's lessons-learned KB with kbcli) and the kb-reconciler agent for reconciliation sessions.",
   "author": {"name": "Joshua Zhou"},
   "license": "MIT",
   "repository": "https://github.com/joshz793/KB_Frame"

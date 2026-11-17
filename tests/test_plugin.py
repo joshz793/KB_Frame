@@ -17,6 +17,11 @@ def main():
         plugin = json.load(f)['version']
     assert plugin == pkg, 'plugin.json is %s, package is %s' % (plugin, pkg)
     assert os.path.isfile(os.path.join(ROOT, 'agents', 'kb-reconciler.md'))
+    skill = os.path.join(ROOT, 'skills', 'lessons-kb', 'SKILL.md')
+    with open(skill) as f:
+        head = f.read().split('---')[1]
+    assert re.search(r'^name: lessons-kb$', head, re.M), 'SKILL.md name must be lessons-kb'
+    assert re.search(r'^description: \S', head, re.M), 'SKILL.md needs a description'
     print('OK')
 
 
