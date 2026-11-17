@@ -874,6 +874,46 @@ class TestMetadata(unittest.TestCase):
             supp.sync(kb, os.path.join(d, 'supplements'), [lid])
             self.assertEqual(supp.load_manifest(os.path.join(d, 'supplements'))['base'], os.path.dirname(src))
 
+    def test_supplement_refreshes_only_named_lessons(self):
+        # supplement <lid> re-copies only the files the named lessons cite; other lessons' out-of-date copies are
+        # left for their own sessions; a full run (all ids) refreshes everything
+        from lessons_kb import supplements as supp
+        with tempfile.TemporaryDirectory() as d:
+            a, b, both = (os.path.join(d, 'run', n) for n in ('A.md', 'B.md', 'both.md')); os.makedirs(os.path.dirname(a))
+            for f in (a, both):
+                with open(f, 'w') as fh:
+                    fh.write('v1\n')
+            for n in ('old.py', 'new.py'):
+                with open(os.path.join(d, 'run', n), 'w') as fh:
+                    fh.write('x\n')
+            with open(b, 'w') as fh:
+                fh.write('v1\nsee `old.py`\n')
+            kb = KB()
+            la = kb.add_lesson({'title': 'a', 'text': 'a', 'category': 'method', 'scope': 'general',
+                                'evidence': [{'path': a, 'note': 'n'}, {'path': both, 'note': 'n'}]})
+            lb = kb.add_lesson({'title': 'b', 'text': 'b', 'category': 'method', 'scope': 'general',
+                                'evidence': [{'path': b, 'note': 'n'}, {'path': both, 'note': 'n'}]})
+            root = os.path.join(d, 'supplements')
+            supp.sync(kb, root, [la, lb], referenced=True)
+            for f in (a, b, both):
+                with open(f, 'a') as fh:
+                    fh.write('v2\n')
+            with open(b, 'a') as fh:
+                fh.write('see `new.py`\n')
+            rep = supp.sync(kb, root, [la])
+            copy = lambda f: read(os.path.join(root, 'general', os.path.basename(f)))
+            self.assertEqual((copy(a), copy(b), copy(both)), ('v1\nv2\n', 'v1\nsee `old.py`\n', 'v1\nv2\n'))
+            refs = lambda: sorted(k for k in supp.load_manifest(root)['files'] if '/refs/' in k)
+            self.assertEqual(refs(), ['general/refs/old.py'])                    # what b's copy names, not B.md now
+            self.assertEqual(rep['left_stale'], ['general/B.md'])
+            self.assertEqual(rep['also_refreshed'], [('general/both.md', [lb])])     # one copy, shared with b
+            stale = [x for x in supp.check(kb, root)[1] if 'changed since' in x]
+            self.assertEqual(len(stale), 1); self.assertIn(lb, stale[0])          # still flagged for b's session
+            rep = supp.sync(kb, root, [la, lb])
+            self.assertEqual((copy(b), rep['left_stale']), ('v1\nsee `old.py`\nv2\nsee `new.py`\n', []))
+            self.assertEqual(refs(), ['general/refs/new.py', 'general/refs/old.py'])
+            self.assertEqual(supp.check(kb, root), ([], []))
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=1)

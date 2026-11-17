@@ -112,6 +112,9 @@ def _name(src, lines):
 def sync(kb, root, lids=(), max_size=DEFAULT_MAX, base=None, referenced=False, excerpt=None, only=None, keep=(),
          fallback=()):
     '''copy the evidence of lessons lids (and keep every lesson already linked) into root, in the level layout;
+    only files a lesson in lids cites (or that such a file names) are re-copied when their original changed; other
+    lessons' copies stay as they are, out of date or not (report 'left_stale'), unless missing or damaged. A
+    refreshed copy that lessons outside lids also cite is listed in 'also_refreshed'.
     excerpt=(lid, path, (a, b)) stores lines a-b of one cited file instead of the whole file. only: the lessons
     this folder holds (default: all); linked lessons outside it are left alone. keep: copies (paths inside root)
     not to delete even if no lesson here cites them. fallback: other folders; when an original is gone, a lesson's
@@ -126,7 +129,7 @@ def sync(kb, root, lids=(), max_size=DEFAULT_MAX, base=None, referenced=False, e
     referenced = referenced or any(v.get('kind') == 'referenced' for v in old.values())
     old_by_key = {(v['source'], tuple(v['lines']) if v.get('lines') else None): (rel, v) for rel, v in old.items()}
     rep = {'copied': [], 'moved': [], 'kept': [], 'removed': [], 'linked': [], 'unlinked': [],
-           'skipped_large': [], 'missing': [], 'referenced': []}
+           'skipped_large': [], 'missing': [], 'referenced': [], 'left_stale': [], 'also_refreshed': []}
     todo = set(lids) | {i for i, l in kb.lessons.items() if any(e.get('supplement') for e in l.get('evidence', []))
                         and (only is None or i in only)}
     plan = {}                              # key -> {'levels': set((rank, dir)), 'cited_by', 'kind', ...}
@@ -162,12 +165,26 @@ def sync(kb, root, lids=(), max_size=DEFAULT_MAX, base=None, referenced=False, e
                                       'kind': 'excerpt' if lines else 'cited'})
             p['levels'].add(lvl); p['cited_by'].add(lid)
             cite[(lid, k)] = key
+    named = set(lids)
+    asked = {k for k, p in plan.items() if p['cited_by'] & named}           # files the named lessons cite
+
+    def frozen(key):
+        '''a copied document of lessons not named here whose original has changed: its copy stays as it is'''
+        hit = old_by_key.get(key)
+        return (key not in asked and hit is not None and os.path.isfile(key[0])
+                and sha256(key[0]) != hit[1].get('sha256_source'))
     if referenced:
         for (src, lines), p in list(plan.items()):
             if lines or not src.endswith(('.md', '.txt')) or not os.path.isfile(src):
                 continue
-            for ref in referenced_files(src, base):
-                if os.path.getsize(ref) > max_size:
+            if frozen((src, None)):              # keep the files its copied version names, not what it names now
+                refs = [v['source'] for r, v in old.items() if src in v.get('referenced_by', ())
+                        and (os.path.isfile(v['source']) or (os.path.isfile(os.path.join(root, r))
+                                                              and sha256(os.path.join(root, r)) == v['sha256']))]
+            else:
+                refs = referenced_files(src, base)
+            for ref in refs:
+                if os.path.isfile(ref) and os.path.getsize(ref) > max_size:
                     rep['skipped_large'].append((f'(named in {os.path.basename(src)})', ref, os.path.getsize(ref)))
                     continue
                 q = plan.setdefault((ref, None), {'levels': set(), 'cited_by': set(), 'referenced_by': set(),
@@ -198,6 +215,7 @@ def sync(kb, root, lids=(), max_size=DEFAULT_MAX, base=None, referenced=False, e
     stage = os.path.join(root, f'.staging{os.getpid()}')
     staged = {}
     today = datetime.date.today().isoformat()
+    asked |= {k for k, p in plan.items() if any((s, None) in asked for s in p['referenced_by'])}
     for key in plan:
         hit = old_by_key.get(key)
         if not hit:
@@ -205,7 +223,10 @@ def sync(kb, root, lids=(), max_size=DEFAULT_MAX, base=None, referenced=False, e
         orel, ov = hit
         f = os.path.join(root, orel)
         src_ok = key[1] is not None or not os.path.isfile(key[0]) or sha256(key[0]) == ov.get('sha256_source')
-        if os.path.isfile(f) and sha256(f) == ov['sha256'] and src_ok:
+        other = not src_ok and key not in asked                # another lesson's evidence: leave it for its session
+        if os.path.isfile(f) and sha256(f) == ov['sha256'] and (src_ok or other):
+            if other:
+                rep['left_stale'].append(orel)
             os.makedirs(stage, exist_ok=True)
             tmp = os.path.join(stage, str(len(staged)))
             os.rename(f, tmp)
@@ -234,6 +255,9 @@ def sync(kb, root, lids=(), max_size=DEFAULT_MAX, base=None, referenced=False, e
             copied, h = today, sha256(dst)
             hs = sha256(src) if os.path.isfile(src) else None
             rep['copied'].append(r)
+            others = sorted(p['cited_by'] - named)
+            if key in asked and key in old_by_key and others:
+                rep['also_refreshed'].append((r, others))
         ent = {'source': key[0], 'kind': p['kind'], 'sha256': h, 'sha256_source': hs,
                'size': os.path.getsize(dst), 'copied': copied, 'cited_by': sorted(p['cited_by'])}
         if key[1]:

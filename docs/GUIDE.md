@@ -88,6 +88,7 @@ Copies of the files lessons cite, so their evidence can be read where the origin
 
 `supplements` in `lessons-kb.json` sets the locations: a path sets the shared folder; `{"shared": …, "project": …}` sets both (one project folder then serves every project KB). A file cited by lessons in both KBs is copied into both folders, so each KB stands alone.
 - **Commands:** `supplement --all` copies the evidence of every lesson, each into its own folder; `--shared` and `--project` do one kind; `supplement <lid>…` does the lessons named.
+- **Refreshing:** a copy is re-made from its original only when the run covers a lesson that cites it. `supplement <lid>…` refreshes the files the named lessons cite (and the files those name), and leaves other lessons' out-of-date copies as they are, so one session's KB step never rewrites the evidence of another session's lessons; the report counts them. A copy cited by a named lesson and by others is refreshed for all of them, and the report lists it. `--all`, `--shared` and `--project` refresh every out-of-date copy they cover. Missing or damaged copies are always re-made.
 - **Moving between folders:** when a lesson moves between KBs (`move`), or a copy sits in the shared folder from an earlier version, the next `supplement --all` copies it into the right folder, from the original or, if that is gone, from the old copy. The shared folder keeps its copy until then. `validate` warns while the shared folder holds copies that only project lessons cite.
 - **Layout:** folders follow the level a lesson applies at, as in the lesson record (§3, "Applicability"):
 
@@ -107,7 +108,7 @@ Copies of the files lessons cite, so their evidence can be read where the origin
 - **Citations:** an evidence entry with a copy reads `{"path": <original>, "note": ..., "supplement": <path inside supplements/>, "sha256": <hash of the copy>}`. The original path stays the primary reference; the copy is for readers who can't reach it.
 - **Referenced files** (scripts, job files, tables named inside a cited document) are copied with `--referenced` into `<level>/refs/`. They are listed only in the manifest, with `referenced_by`, and are kept on later runs.
 - **Size cap:** 1 MB per file by default. For a larger output, store the lines the lesson rests on: `supplement <lid> --path <file> --lines A-B`.
-- **Checks:** `validate` warns when a copy is missing or no longer matches its checksum, and when the original has changed since it was copied (rerun `supplement`).
+- **Checks:** `validate` warns when a copy is missing or no longer matches its checksum, and when the original has changed since it was copied (rerun `supplement <lid>` for that lesson when its work closes).
 - Evidence entries are not part of a lesson's id, so linking copies never changes ids.
 - **After adding a lesson** (shared or project), run `kbcli supplement <lid> --referenced`. [FILES.md](FILES.md) maps both folders.
 
@@ -298,7 +299,7 @@ kbcli --reconcile conflict resolve C-... --action replace --result <new> --repla
 kbcli --reconcile conflict resolve C-... --action replace --result <n1> <n2> --replace <o1> <o2> --map <o1>=<n1> <o2>=<n2>
 kbcli --reconcile remove <lid> --why "..."   # drop a lesson without a successor (archived in conflicts.json)
 kbcli --reconcile conflict trace           # copy shared lessons archived only in project-KB conflicts into the shared KB
-kbcli supplement <lid> [--referenced]     # copy the files a lesson cites into its KB's supplements folder (§2)
+kbcli supplement <lid> [--referenced]     # copy the files a lesson cites into its KB's supplements folder; refreshes only its copies (§2)
 kbcli supplement --all --referenced       # every lesson, each into its own folder; files over --max-size (1M) are skipped
 kbcli supplement --shared | --project     # only the shared, or only the project, lessons
 kbcli supplement <lid> --path out.log --lines 600-640   # an excerpt of a large output

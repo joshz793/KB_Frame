@@ -562,7 +562,11 @@ def main(argv=None, config_start=None):
                         f"{len(set(rep['referenced']))} referenced files; "
                         f"{len(rep['skipped_large'])} skipped as too large, {len(rep['missing'])} missing" +
                         ''.join(f"\n  too large: {x[1]} ({x[2] / 1e6:.1f} MB; {x[0]})" for x in rep['skipped_large']) +
-                        ''.join(f"\n  missing: {x[1]} ({x[0]})" for x in rep['missing'])
+                        ''.join(f"\n  missing: {x[1]} ({x[0]})" for x in rep['missing']) +
+                        ''.join(f"\n  also refreshed for {', '.join(x[1])}: {x[0]}" for x in rep['also_refreshed']) +
+                        (f"\n  {len(rep['left_stale'])} copies of other lessons' evidence left out of date "
+                         "(their sessions refresh them; `supplement --all` refreshes everything)"
+                         if rep['left_stale'] else '')
                         for root, rep in reps.items()) or 'nothing to copy')
                 elif c == 'conflict':
                     if args.ccmd == 'add':
