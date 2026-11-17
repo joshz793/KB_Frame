@@ -1,0 +1,12 @@
+{
+  "name": "kb-frame",
+  "owner": {"name": "Joshua Zhou"},
+  "metadata": {"description": "The lessons-kb framework's Claude Code plugin."},
+  "plugins": [
+    {
+      "name": "kb",
+      "source": "./",
+      "description": "kb-reconciler agent for reconciliation sessions on a lessons-learned KB."
+    }
+  ]
+}
